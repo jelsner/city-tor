@@ -5,6 +5,20 @@ editor_options:
   chunk_output_type: console
 ---
 
+```{r}
+library(sf)
+library(tidyverse)
+library(USAboundaries)
+# devtools::install_github("ropensci/USAboundariesData")
+```
+
+Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
+```{r}
+Cities.sf <- us_cities(1950)
+dim(Cities.sf)
+range(Cities.sf$population)
+```
+
 Cities with the largest change in the number of tornadoes before/after 1985.
 
 Create a link/hover with map and change plot. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
@@ -20,11 +34,8 @@ unzip("tl_2019_us_cbsa.zip",
       exdir = "tl_2019_us_cbsa")
 }
 
-library(sf)
-
 MSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
                   layer = "tl_2019_us_cbsa") 
-
 ```
 
 Counts by metropolitan areas
