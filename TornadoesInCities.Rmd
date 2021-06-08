@@ -8,20 +8,24 @@ editor_options:
 ```{r}
 library(sf)
 library(tidyverse)
-library(USAboundaries)
-# devtools::install_github("ropensci/USAboundariesData")
+```
+
+Get USA boundary map from {tidycensus}.
+```{r}
+library(tidycensus)
+data(state_laea)
 ```
 
 Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
 ```{r}
+library(USAboundaries)
+# devtools::install_github("ropensci/USAboundariesData")
 Cities.sf <- us_cities(1950)
 dim(Cities.sf)
 range(Cities.sf$population)
 ```
 
 Cities with the largest change in the number of tornadoes before/after 1985.
-
-Create a link/hover with map and change plot. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
 
 The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urban areas of 10,000+ population and/or are socioeconomically tied to the urban center by commute proximity. Prior to the year 2000, these were collectively known as MSA- Metropolitan Statistical Areas and Micropolitan Statistical Areas. An exclusive feature of GreatData CBSA Data is that the population statistics are calculated annually. Therefore, the CBSA rank is based on a more recent population than typical census data classifications.
 
@@ -35,23 +39,21 @@ unzip("tl_2019_us_cbsa.zip",
 }
 
 MSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
-                  layer = "tl_2019_us_cbsa") 
+                  layer = "tl_2019_us_cbsa") %>%
+  st_transform(crs = st_crs(state_laea))
 ```
 
 Counts by metropolitan areas
 ```{r}
-library(tidyverse)
-
 if(!"1950-2019-torn-aspath" %in% list.files()) {
 download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
               destfile = "1950-2019-torn-aspath.zip")
 unzip("1950-2019-torn-aspath.zip")
 }
 
-
 Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
                    layer = "1950-2019-torn-aspath") %>%
-  st_transform(crs = st_crs(MSA.sf)) %>%
+  st_transform(crs = st_crs(state_laea)) %>%
   mutate(EarlyLate = yr < 1985) %>%
   filter(mag >= 2)
 
@@ -116,7 +118,6 @@ Both <- Both %>%
 
 Plot a slope graph.
 ```{r}
-library(ggplot2)
 library(ggrepel)
 
 ggplot(Both) +
@@ -147,3 +148,53 @@ ggplot(Both) +
   ggtitle(label = "The shifting tornado threat", 
           subtitle = "Cities with the largest change (top 10 increases & decreases) in the number of strong (EF2+ damage) tornadoes before/after 1985")
 ```
+
+Create a link/hover with map and change plot. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
+
+```{r}
+library(ggiraph)
+library(patchwork)
+
+Both <- Both %>%
+  select(GEOID, After1985, Before1985, Difference)
+
+Both.sf <- MSA.sf %>%
+  right_join(Both,
+            by = "GEOID") 
+
+( US_map <- ggplot(state_laea) +
+  geom_sf() +
+  geom_sf_interactive(data = Both.sf, 
+                      aes(fill = Difference > 0, data_id = GEOID)) + 
+#  scale_fill_distiller(palette = "RdBu",
+#                       direction = -1, 
+#                       guide = FALSE) + 
+  scale_fill_manual(values = c("#E69F00", "#CC79A7"),
+                    guide = FALSE) +
+  theme_void() )
+
+( Point_plot <- ggplot(Both.sf, aes(x = Difference, y = reorder(NAME, Difference), 
+                                    fill = Difference > 0)) +
+  geom_point_interactive(size = 2.5, shape = 21,
+                         aes(data_id = GEOID)) +
+#  scale_fill_distiller(palette = "RdBu", 
+#                       direction = -1,
+#                       guide = FALSE) + 
+  scale_fill_manual(values = c("#E69F00", "#CC79A7"),
+                      guide = FALSE) +
+  scale_x_continuous(limits = c(-75, 25)) +
+  labs(title = "Top Differences in Tornado Counts",
+       subtitle = "After Minus Before 1985",
+       y = "",
+       x = "") + 
+  theme_minimal() )
+
+x <- girafe(ggobj = Point_plot / US_map, width_svg = 12, height_svg = 8) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"))
+
+if(interactive()){
+  print(x)
+}
+
+```
+
