@@ -16,7 +16,7 @@ library(tidycensus)
 data(state_laea)
 ```
 
-Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
+Note used: Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
 ```{r}
 library(USAboundaries)
 # devtools::install_github("ropensci/USAboundariesData")
@@ -31,40 +31,40 @@ The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urb
 
 https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-metropolitan-statistical-area-micropolitan-statist
 
-I was not able to download the CBSA file from home. I was able at work.
+I was not able to download the CBSA file from home. I was able at work. https://www2.census.gov/geo/tiger/TIGER2019/CBSA/tl_2019_us_cbsa.zip
 ```{r}
 if(!"tl_2019_us_cbsa" %in% list.files()){
 unzip("tl_2019_us_cbsa.zip",
       exdir = "tl_2019_us_cbsa")
 }
 
-MSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
-                  layer = "tl_2019_us_cbsa") %>%
+CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
+                   layer = "tl_2019_us_cbsa") %>%
   st_transform(crs = st_crs(state_laea))
 ```
 
-Counts by metropolitan areas
+Counts by core-based statistical areas
 ```{r}
-if(!"1950-2019-torn-aspath" %in% list.files()) {
-download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
-              destfile = "1950-2019-torn-aspath.zip")
-unzip("1950-2019-torn-aspath.zip")
+if(!"1950-2018-torn-aspath" %in% list.files()) {
+download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2018-torn-aspath.zip",
+              destfile = "1950-2018-torn-aspath.zip")
+unzip("1950-2018-torn-aspath.zip")
 }
 
-Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
-                   layer = "1950-2019-torn-aspath") %>%
+Torn.sf <- st_read(dsn = "1950-2018-torn-aspath", 
+                   layer = "1950-2018-torn-aspath") %>%
   st_transform(crs = st_crs(state_laea)) %>%
   mutate(EarlyLate = yr < 1985) %>%
   filter(mag >= 2)
 
 TorCounts.df <- Torn.sf %>%
-  st_intersection(MSA.sf) %>%
+  st_intersection(CBSA.sf) %>%
   st_drop_geometry() %>%
   group_by(GEOID) %>%
   summarize(nT = n())
 
 ( TorCounts.df <- TorCounts.df %>%
-  left_join(MSA.sf,
+  left_join(CBSA.sf,
             by = "GEOID") %>%
   arrange(desc(nT)) )
 
@@ -75,6 +75,39 @@ TorCounts.df %>%
   geom_segment(mapping = aes(yend = NAME, xend = 0), size = 1)+
   labs(y= "", x = "") +
   theme_minimal()
+```
+
+Create a link/hover with map. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
+
+```{r}
+library(ggiraph)
+library(patchwork)
+
+Top25.sf <- TorCounts.df %>%
+  slice_max(nT, n = 25) %>%
+  st_as_sf()
+
+( US_map <- ggplot(data = state_laea) +
+  geom_sf(fill = "transparent", size = 1) +
+  geom_sf_interactive(data = Top25.sf, color = "transparent",
+                      aes(fill = nT, data_id = GEOID)) + 
+  scale_fill_distiller(palette = "Greens",
+                       direction = 1, 
+                       guide = FALSE) + 
+  theme_void() )
+
+( Stick_plot <- ggplot(data = Top25.sf, 
+                       mapping = aes(x = nT, y = reorder(NAME, nT))) +
+  geom_point_interactive(size = 2, mapping = aes(data_id = GEOID)) +
+  scale_x_continuous(limits = c(0, NA)) +
+  labs(y= "", x = "") +
+  labs(title = "Top 25 Metropolitan Areas by Number of Tornadoes",
+       subtitle = "1950-2018",
+       y = "", x = "") + 
+  theme_minimal() )
+
+girafe(ggobj = Stick_plot / US_map, width_svg = 10, height_svg = 6) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"))
 ```
 
 Counts grouped early and late
@@ -149,7 +182,7 @@ ggplot(Both) +
           subtitle = "Cities with the largest change (top 10 increases & decreases) in the number of strong (EF2+ damage) tornadoes before/after 1985")
 ```
 
-Create a link/hover with map and change plot. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
+Create a link/hover with map. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
 
 ```{r}
 library(ggiraph)
