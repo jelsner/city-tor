@@ -1,0 +1,377 @@
+---
+title: "Difference in differences, IL vs MS tornadoes"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Accessing and tabulating demographic data for an economic impact analysis of tornadoes
+
+Tornadoes create significant economic losses. Losses are classified as direct losses or indirect. Direct losses are the result of the destruction of assets and the resulting decrease in their value and/or the lost income as a result of destroyed assets. Indirect losses relate to the wider impact and include the loss of production and sales, increased commute times, increased transportation costs, and decreased tourist activity. 
+
+Despite the economic devastation, tornadoes can act as economic stimuli, through rebuilding efforts, the inflow of insurance money and disaster-relief funds, and improvements in the labor market. This study aims to quantify changes in economic activity following significant tornado impacts.
+
+Get USA boundary map from {tidycensus}.
+```{r}
+library(tidycensus)
+data(state_laea)
+
+state_laea2 <- state_laea %>%
+  filter(!GEOID %in% c("02", "15"))
+
+ILMS.sf <- state_laea %>%
+  filter(GEOID %in% c("17", "28"))
+```
+
+Map of tornadoes intersecting Illinois or Mississippi.
+```{r}
+Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+                   layer = "1950-2019-torn-aspath") %>%
+  st_transform(crs = st_crs(state_laea)) 
+
+Intersects <- ILMS.sf %>%
+  st_intersects(Torn.sf) %>%
+  unlist()
+
+TornILMS.sf <- Torn.sf[Intersects,]
+STATE = rep(c("Illinois", "Mississippi"), times = c(2592, 2347))
+TornILMS.sf$STATE = STATE
+
+ggplot(data = state_laea2) +
+  geom_sf(fill = "white", size = .3) +
+  geom_sf(data = TornILMS.sf) 
+
+TornILMS.sf %>% 
+  st_drop_geometry() %>%
+  filter(yr >= 2007) %>%
+  group_by(yr, STATE) %>%
+  summarize(nT = n()) %>%
+  ggplot(mapping = aes(x = yr, y = nT)) +
+    geom_col() +
+    facet_wrap(~ STATE) +
+  scale_x_continuous(breaks = seq(from = 2007, to = 2019, by = 2)) +
+  labs(y = "Number of Tornadoes", x = "") +
+  theme_minimal()
+
+TornILMS.sf %>% 
+  st_drop_geometry() %>%
+  filter(yr >= 1994) %>%
+  group_by(mo, STATE) %>%
+  summarize(nT = n()) %>%
+  ggplot(mapping = aes(x = mo, y = nT)) +
+    geom_col() +
+    facet_wrap(~ STATE) + 
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  labs(y = "Number of Tornadoes", x = "") +
+  theme_minimal()
+```
+
+Write out for Blume
+```{r}
+TornILMS.sf <- TornILMS.sf %>%
+  st_transform(crs = 4326)
+st_write(TornILMS.sf, 
+         dsn = "1950-2019-torn-ILMS-aspath",
+         driver = "ESRI Shapefile")
+
+Test.sf <- st_read(dsn = "1950-2019-torn-ILMS-aspath",
+                   layer = "1950-2019-torn-ILMS-aspath")
+```
+
+Note used: Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
+```{r}
+library(USAboundaries)
+# devtools::install_github("ropensci/USAboundariesData")
+Cities.sf <- us_cities(1950)
+dim(Cities.sf)
+range(Cities.sf$population)
+```
+
+Table from Excel sheet sent by Robert Blume on 12/23/2020
+
+City Names	FID  Full 1950-2018 SPC	om	yr	mo	dy	date	time	tz	st	stf	stn	mag	inj	fat	loss	closs
+    MS Tornadoes
+Yazoo City, MS	53375	140	    2010	4	24	4/24/2010	10:09:00	3	LA	22	6	  4	146	10	386.035	23.52
+Enterprise, MS	55302	311079	2011	4	27	4/27/2011	16:42:00	3	MS	28	81	4	17	7	25.813	2.1
+Smithville, MS	55279	303562	2011	4	27	4/27/2011	14:42:00	3	MS	28	76	5	137	23	14.4	0
+Hattiesburg, MS	57225	433413	2013	2	10	2/10/2013	17:03:00	3	MS	28	0 	4	71	0	38.525	0
+		IL Tornadoes														
+Lake Petersburg, IL (Menard County)	54508	1274	2010	12	31	12/31/2010	12:37:00	3	IL	17	50	3	1	0	12	0
+Harrisburg, IL	56324	359691	2012	2	29	2/29/2012	4:51:00	3	IL	17	0	4	108	8	2	0
+Washington, IL 	57957	483775	2013	11	17	11/17/2013	10:59:00	3	IL	17	0	4	125	3	935.225	0
+New Minden, IL	57961	482450	2013	11	17	11/17/2013	12:04:00	3	IL	17	0	4	2	2	0	0
+
+1. Get the New Minden, IL tornado track. Transform the CRS to EPSG:3857 https://epsg.io/3857 Pseudo-Mercator, Spherical Mercator, google maps.
+```{r}
+library(sf)
+library(tidyverse)
+
+#download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2018-torn-aspath.zip",
+#              destfile = "data/temp.zip")
+#unzip("data/temp.zip")
+
+Torn.sf <- read_sf(dsn = "data/1950-2018-torn-aspath") %>%
+  filter(yr == 2013, st == "IL", om == 482450) %>%
+  st_transform(crs = 3857)
+```
+
+2. What economic/demographic variables are available?
+```{r}
+library(tidycensus)
+
+v13 <- load_variables(2013, "acs5", cache = TRUE)
+View(v13)
+```
+
+B19083_001 Estimate!!Gini Index GINI INDEX OF INCOME INEQUALITY
+B19301_001 Estimate!!Per capita income in the past 12 months (in 2013 inflation-adjusted dollars) PER CAPITA INCOME IN THE PAST 12 MONTHS
+
+Estimate!!Median household income in the past 12 months (in 2013 inflation-adjusted dollars)!!Total B25119_001 and 
+Estimate!!Median earnings in the past 12 months!!Total B08121_001
+
+3. Get the economic/demographic variables at the census tract level for all of Illinois.
+```{r}
+Before.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001"), 
+                     state = "IL", 
+                     county = "Washington",
+                     year = 2013,
+                     geometry = TRUE) %>%
+  mutate(Status = "Before") 
+
+After.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001"), 
+                     state = "IL", 
+                     county = "Washington",
+                     year = 2014,
+                     geometry = TRUE) %>%
+  mutate(Status = "After")
+
+Census.sf <- rbind(Before.sf, After.sf) 
+```
+
+4. Get the economic/demographic variable estimates only for the tracts affected by the tornado. Add the distance traveled by the tornado within each tract as a separate column.
+```{r}
+Census.sf <- Census.sf %>%
+  st_transform(crs = 3857)
+
+TractsAffected <- st_intersection(Census.sf,
+                                  Torn.sf)
+
+TractsAffected <- TractsAffected %>%
+  mutate(TorTrackLength = st_length(TractsAffected$geometry)) %>%
+  rename(TornadoYear = yr) %>%
+  as.data.frame()
+```
+
+5. Summarize
+```{r}
+TractsAffected %>%
+#  filter(as.numeric(TorTrackLength) > 200) %>%
+  group_by(Status, variable) %>%
+  summarize(nTracts = n(),
+            estimate = mean(estimate),
+            moe = mean(moe))
+```
+
+Repeat for the Washington, IL tornado
+```{r}
+Torn.sf <- read_sf(dsn = "data/1950-2018-torn-aspath") %>%
+  filter(yr == 2013, st == "IL", om == 483775) %>%
+  st_transform(crs = 3857)
+
+Before.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001",
+                                   GiniIndex = "B19083_001"), 
+                     state = "IL", 
+                     year = 2013,
+                     geometry = TRUE) %>%
+  mutate(Status = "Before") 
+
+After.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001",
+                                   GiniIndex = "B19083_001"), 
+                     state = "IL", 
+                     year = 2014,
+                     geometry = TRUE) %>%
+  mutate(Status = "After")
+
+Census.sf <- rbind(Before.sf, After.sf) %>%
+  st_transform(crs = 3857)
+
+TractsAffected <- st_intersection(Census.sf,
+                                  Torn.sf)
+
+TractsAffected <- TractsAffected %>%
+  mutate(TorTrackLength = st_length(TractsAffected$geometry)) %>%
+  rename(TornadoYear = yr) %>%
+  as.data.frame()
+
+( Output <- TractsAffected %>%
+#  filter(as.numeric(TorTrackLength) > 200) %>%
+  group_by(Status, variable) %>%
+  summarize(nTracts = n(),
+            estimate = mean(estimate, na.rm = TRUE),
+            moe = mean(moe, na.rm = TRUE)) )
+Output %>% 
+  select(Status, variable, estimate) %>%
+  pivot_wider(names_from = Status, values_from = estimate) %>%
+  mutate(PercentChange = (After - Before) / Before * 100)
+
+( Statewide <- Census.sf %>%
+    as.data.frame() %>%
+    group_by(Status, variable) %>%
+    summarize(nTracts = n(),
+              estimate = mean(estimate, na.rm = TRUE),
+              moe = mean(moe, na.rm = TRUE)) )
+Statewide %>% 
+  select(Status, variable, estimate) %>%
+  pivot_wider(names_from = Status, values_from = estimate) %>%
+  mutate(PercentChange = (After - Before) / Before * 100)
+```
+
+Repeat for Hattiesburg, MS	57225	433413	2013	2	10	2/10/2013	17:03:00	3	MS	28	0	4	71	0	38.525	0
+```{r}
+Torn.sf <- read_sf(dsn = "data/1950-2018-torn-aspath") %>%
+  filter(yr == 2013, st == "MS", om == 433413) %>%
+  st_transform(crs = 3857)
+
+Before.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001",
+                                   GiniIndex = "B19083_001"), 
+                     state = "MS", 
+                     year = 2013,
+                     geometry = TRUE) %>%
+  mutate(Status = "Before") 
+
+After.sf <- get_acs(geography = "tract", 
+                     variables = c(MedianHHIncome = "B25119_001",
+                                   MedianEarnings = "B08121_001",
+                                   GiniIndex = "B19083_001"), 
+                     state = "MS", 
+                     year = 2014,
+                     geometry = TRUE) %>%
+  mutate(Status = "After")
+
+Census.sf <- rbind(Before.sf, After.sf) %>%
+  st_transform(crs = 3857)
+
+TractsAffected <- st_intersection(Census.sf,
+                                  Torn.sf)
+
+TractsAffected <- TractsAffected %>%
+  mutate(TorTrackLength = st_length(TractsAffected$geometry)) %>%
+  rename(TornadoYear = yr) %>%
+  as.data.frame()
+
+( Output <- TractsAffected %>%
+#  filter(as.numeric(TorTrackLength) > 200) %>%
+  group_by(Status, variable) %>%
+  summarize(nTracts = n(),
+            estimate = mean(estimate, na.rm = TRUE),
+            moe = mean(moe, na.rm = TRUE)) )
+Output %>% 
+  select(Status, variable, estimate) %>%
+  pivot_wider(names_from = Status, values_from = estimate) %>%
+  mutate(PercentChange = (After - Before) / Before * 100)
+
+( Statewide <- Census.sf %>%
+    as.data.frame() %>%
+    group_by(Status, variable) %>%
+    summarize(nTracts = n(),
+              estimate = mean(estimate, na.rm = TRUE),
+              moe = mean(moe, na.rm = TRUE)) %>%
+  select(Status, variable, estimate) %>%
+  pivot_wider(names_from = Status, values_from = estimate) %>%
+  mutate(PercentChange = (After - Before) / Before * 100) )
+```
+
+Plot a slope graph.
+```{r}
+Tornado <- c("New Minden", "Washington", "Harrisburg", "Lake Petersburg", "Control (Fairview Heights)", "Statewide Average")
+BeforeT <- c(32898, 37029, 30062, 31070, 27640, 31353)
+AfterT <- c(31825, 37577, 31302, 33500, 33461, 36988)
+Type <- c(rep("Tornado", times = 4), rep("Control", times = 2))
+State <- "Illinois"
+Df <- data.frame(Tornado, BeforeT, AfterT, Type, State)
+
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r}
+ggplot(Df) +
+  geom_segment(mapping = aes(x = .4, xend = .6, 
+                             y = BeforeT, yend = AfterT, 
+                             color = Type)) +
+  geom_point(mapping = aes(x = .4, y = BeforeT, color = Type)) +
+  geom_point(mapping = aes(x = .6, y = AfterT, color = Type)) +
+  scale_color_brewer(palette = "Paired", guide = FALSE) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(25000, 40000)) +
+  theme(panel.background = element_blank(),
+        panel.grid=element_blank(),
+        axis.ticks=element_blank(),
+        axis.text=element_blank(),
+        panel.border=element_blank()) +
+  xlab("") + ylab("") +
+  geom_text_repel(data = Df, direction = "y",
+                  mapping = aes(x = .38, y = BeforeT, 
+                                label = paste(Tornado, paste0("$",BeforeT), sep = "   "), color = Type), hjust = 1) +
+  geom_text_repel(data = Df, direction = "y",
+            mapping = aes(x = .62, y = AfterT, 
+                          label = paste0("$",AfterT), color = Type), hjust = 0) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "Before", x = .4, y = 39000), hjust = 1) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "After", x = .6, y = 39000), hjust = 0) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "City", x = .3, y = 39000), hjust = 1) +
+  ggtitle(label = "Income rises slower in Illinois cities after being hit by an intense tornadoes (2010-2013)", 
+          subtitle = "Illinois")
+```
+
+```{r}
+Tornado <- c("Hattiesburg", "Smithsville", "Enterprise", "Yazoo City", "Control (Tupelo)", "Statewide Average")
+BeforeT <- c(30585, 28012, 27028, 20800, 25142, 23171)
+AfterT <- c(29395, 28669, 37829, 25651, 29149, 28512)
+Type <- c(rep("Tornado", times = 4), rep("Control", times = 2))
+State <- "Mississippi"
+Df <- data.frame(Tornado, BeforeT, AfterT, Type, State)
+```
+
+```{r}
+ggplot(Df) +
+  geom_segment(mapping = aes(x = .4, xend = .6, 
+                             y = BeforeT, yend = AfterT, 
+                             color = Type)) +
+  geom_point(mapping = aes(x = .4, y = BeforeT, color = Type)) +
+  geom_point(mapping = aes(x = .6, y = AfterT, color = Type)) +
+  scale_color_brewer(palette = "Paired", guide = FALSE) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(20000, 40000)) +
+  theme(panel.background = element_blank(),
+        panel.grid=element_blank(),
+        axis.ticks=element_blank(),
+        axis.text=element_blank(),
+        panel.border=element_blank()) +
+  xlab("") + ylab("") +
+  geom_text_repel(data = Df, direction = "y",
+                  mapping = aes(x = .38, y = BeforeT, 
+                                label = paste(Tornado, paste0("$",BeforeT), sep = "   "), color = Type), hjust = 1) +
+  geom_text_repel(data = Df, direction = "y",
+            mapping = aes(x = .62, y = AfterT, 
+                          label = paste0("$",AfterT), color = Type), hjust = 0) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "Before", x = .4, y = 39000), hjust = 1) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "After", x = .6, y = 39000), hjust = 0) +
+  geom_text(data = Df[1, ], 
+            mapping = aes(label = "City", x = .3, y = 39000), hjust = 1) +
+  ggtitle(label = "Income rises slower in Mississippi cities after being hit by a violent tornado (2010-2013)", 
+          subtitle = "Mississippi")
+```

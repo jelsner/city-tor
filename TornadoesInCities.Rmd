@@ -8,82 +8,12 @@ editor_options:
 ```{r}
 library(sf)
 library(tidyverse)
+library(tidycensus)
 ```
 
 Get USA boundary map from {tidycensus}.
 ```{r}
-library(tidycensus)
 data(state_laea)
-
-state_laea2 <- state_laea %>%
-  filter(!GEOID %in% c("02", "15"))
-
-ILMS.sf <- state_laea %>%
-  filter(GEOID %in% c("17", "28"))
-```
-
-Map of tornadoes affecting Illinois and Mississippi.
-```{r}
-Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
-                   layer = "1950-2019-torn-aspath") %>%
-  st_transform(crs = st_crs(state_laea)) 
-
-Intersects <- ILMS.sf %>%
-  st_intersects(Torn.sf) %>%
-  unlist()
-
-TornILMS.sf <- Torn.sf[Intersects,]
-STATE = rep(c("Illinois", "Mississippi"), times = c(2592, 2347))
-TornILMS.sf$STATE = STATE
-
-ggplot(data = state_laea2) +
-  geom_sf(fill = "white", size = .3) +
-  geom_sf(data = TornILMS.sf) 
-
-TornILMS.sf %>% 
-  st_drop_geometry() %>%
-  filter(yr >= 2007) %>%
-  group_by(yr, STATE) %>%
-  summarize(nT = n()) %>%
-  ggplot(mapping = aes(x = yr, y = nT)) +
-    geom_col() +
-    facet_wrap(~ STATE) +
-  scale_x_continuous(breaks = seq(from = 2007, to = 2019, by = 2)) +
-  labs(y = "Number of Tornadoes", x = "") +
-  theme_minimal()
-
-TornILMS.sf %>% 
-  st_drop_geometry() %>%
-  filter(yr >= 2007) %>%
-  group_by(mo, STATE) %>%
-  summarize(nT = n()) %>%
-  ggplot(mapping = aes(x = mo, y = nT)) +
-    geom_col() +
-    facet_wrap(~ STATE) + 
-  scale_x_continuous(breaks = 1:12, labels = month.abb) +
-  labs(y = "Number of Tornadoes", x = "") +
-  theme_minimal()
-```
-
-Write out for Blume
-```{r}
-TornILMS.sf <- TornILMS.sf %>%
-  st_transform(crs = 4326)
-st_write(TornILMS.sf, 
-         dsn = "1950-2019-torn-ILMS-aspath",
-         driver = "ESRI Shapefile")
-
-Test.sf <- st_read(dsn = "1950-2019-torn-ILMS-aspath",
-                   layer = "1950-2019-torn-ILMS-aspath")
-```
-
-Note used: Can get decennial census population estimates for cities with the `us_cities()` function from the {USAboundaries} package. The geometry is point. We could create a XX km buffer around each city with more than N number of people in 1950.
-```{r}
-library(USAboundaries)
-# devtools::install_github("ropensci/USAboundariesData")
-Cities.sf <- us_cities(1950)
-dim(Cities.sf)
-range(Cities.sf$population)
 ```
 
 Cities with the largest change in the number of tornadoes before/after 1985.
