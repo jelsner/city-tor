@@ -5,6 +5,9 @@ editor_options:
   chunk_output_type: console
 ---
 
+What cities have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and then count the number of tornadoes within each core-based statistical area.
+
+Load packages.
 ```{r}
 library(sf)
 library(tidyverse)
@@ -16,13 +19,11 @@ Get USA boundary map from {tidycensus}.
 data(state_laea)
 ```
 
-Cities with the largest change in the number of tornadoes before/after 1985.
-
 The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urban areas of 10,000+ population and/or are socioeconomically tied to the urban center by commute proximity. Prior to the year 2000, these were collectively known as MSA- Metropolitan Statistical Areas and Micropolitan Statistical Areas. An exclusive feature of GreatData CBSA Data is that the population statistics are calculated annually. Therefore, the CBSA rank is based on a more recent population than typical census data classifications.
 
-https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-metropolitan-statistical-area-micropolitan-statist
+https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-metropolitan-statistical-area-micropolitan-statist https://www2.census.gov/geo/tiger/TIGER2019/CBSA/tl_2019_us_cbsa.zip
 
-I was not able to download the CBSA file from home. I was able at work. https://www2.census.gov/geo/tiger/TIGER2019/CBSA/tl_2019_us_cbsa.zip
+Get the CBSA polygons.
 ```{r}
 if(!"tl_2019_us_cbsa" %in% list.files()){
 unzip("tl_2019_us_cbsa.zip",
@@ -34,32 +35,68 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
   st_transform(crs = st_crs(state_laea))
 ```
 
-Counts by core-based statistical areas
+Get the tornado tracks. EF2+
 ```{r}
-if(!"1950-2018-torn-aspath" %in% list.files()) {
-download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2018-torn-aspath.zip",
-              destfile = "1950-2018-torn-aspath.zip")
-unzip("1950-2018-torn-aspath.zip")
+if(!"1950-2019-torn-aspath" %in% list.files()) {
+download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
+              destfile = "1950-2019-torn-aspath.zip")
+unzip("1950-2019-torn-aspath.zip")
 }
 
-Torn.sf <- st_read(dsn = "1950-2018-torn-aspath", 
-                   layer = "1950-2018-torn-aspath") %>%
+Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+                   layer = "1950-2019-torn-aspath") %>%
   st_transform(crs = st_crs(state_laea)) %>%
-  mutate(EarlyLate = yr < 1985) %>%
+  mutate(Late = yr >= 1985) %>%
   filter(mag >= 2)
+```
 
-TorCounts.df <- Torn.sf %>%
-  st_intersection(CBSA.sf) %>%
-  st_drop_geometry() %>%
-  group_by(GEOID) %>%
+Create a map showing one CBSA and the intersecting tornado tracks.
+```{r}
+Area.sf <- CBSA.sf %>%
+  filter(NAME == "Austin-Round Rock-Georgetown, TX")
+
+State.sf <- state_laea %>%
+  filter(GEOID == "48")
+
+Intersects <- Area.sf %>%
+  st_intersects(Torn.sf) %>%
+  unlist()
+
+AreaTors.sf <- Torn.sf[Intersects, ]
+
+ggplot() +
+  geom_sf(data = State.sf, fill = "transparent") +
+  geom_sf(data = Area.sf) +
+  geom_sf(data = AreaTors.sf, color = "red")
+
+AreaTors.sf %>%
+  group_by(Late, mag) %>%
   summarize(nT = n())
+```
 
-( TorCounts.df <- TorCounts.df %>%
-  left_join(CBSA.sf,
-            by = "GEOID") %>%
-  arrange(desc(nT)) )
+All metro areas. Also see {stars.Rmd} for creating a space-time object.
+```{r}
+Intersects <- CBSA.sf %>%
+  st_intersects(Torn.sf) %>%
+  unlist()
+AreaTors.sf <- Torn.sf[Intersects, ]
 
-TorCounts.df %>%
+Intersects.m <- CBSA.sf %>%
+  st_intersects(Torn.sf, sparse = FALSE)
+
+TorCounts.sf <- 
+  data.frame(GEOID = CBSA.sf$GEOID, 
+             NAME = CBSA.sf$NAME,
+             nT = rowSums(Intersects.m),
+             geometry = CBSA.sf$geometry) %>%
+  st_as_sf()
+```
+
+```{r}
+TorCounts.sf %>%
+  arrange(desc(nT))
+
+TorCounts.sf %>%
   slice_max(nT, n = 25) %>%
   ggplot(mapping = aes(y = reorder(NAME, nT), x = nT)) +
   geom_point(size = 2, colour = "black", aes(color = )) + 
