@@ -35,7 +35,7 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
   st_transform(crs = st_crs(state_laea))
 ```
 
-Get the tornado tracks. EF2+
+Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
 ```{r}
 if(!"1950-2019-torn-aspath" %in% list.files()) {
 download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
@@ -52,11 +52,12 @@ Torn.sf <- st_read(dsn = "1950-2019-torn-aspath",
 
 Create a map showing one CBSA and the intersecting tornado tracks.
 ```{r}
+NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
 Area.sf <- CBSA.sf %>%
-  filter(NAME == "Austin-Round Rock-Georgetown, TX")
+  filter(NAME == NameC)
 
 State.sf <- state_laea %>%
-  filter(GEOID == "48")
+  filter(GEOID == "13")
 
 Intersects <- Area.sf %>%
   st_intersects(Torn.sf) %>%
@@ -64,14 +65,18 @@ Intersects <- Area.sf %>%
 
 AreaTors.sf <- Torn.sf[Intersects, ]
 
-ggplot() +
-  geom_sf(data = State.sf, fill = "transparent") +
-  geom_sf(data = Area.sf) +
-  geom_sf(data = AreaTors.sf, color = "red")
+nT <- AreaTors.sf %>%
+  group_by(Late) %>%
+  summarize(nT = n()) %>%
+  pull(nT)
 
-AreaTors.sf %>%
-  group_by(Late, mag) %>%
-  summarize(nT = n())
+ggplot() +
+  geom_sf(data = State.sf, fill = "white") +
+  geom_sf(data = Area.sf, color = "gray70") +
+  geom_sf(data = AreaTors.sf, color = "red") +
+  labs(title = paste0("Estimated tracks of significant tornadoes across ", NameC),
+       subtitle = paste0("Total numbers: 1950-1984: ", nT[1], paste0(", 1985-2019: ", nT[2])))
+
 ```
 
 All metro areas. Also see {stars.Rmd} for creating a space-time object.
@@ -105,36 +110,60 @@ TorCounts.sf %>%
   theme_minimal()
 ```
 
+```{r}
+library(patchwork)
+
+Top25.sf <- TorCounts.sf %>%
+  slice_max(nT, n = 25)
+
+( US_map <- ggplot(data = state_laea) +
+  geom_sf(fill = 'gray30') +
+  geom_sf(data = Top25.sf, size = 0,
+          mapping = aes(fill = nT)) + 
+  scale_fill_distiller(palette = "Greens",
+                       direction = 1, 
+                       guide = FALSE) + 
+  theme_dark() )
+
+( P_plot <- ggplot(data = Top25.sf, 
+                   mapping = aes(x = nT, y = reorder(NAME, nT), color = nT)) +
+  geom_point(size = 2) +
+  scale_color_distiller(palette = "Greens",
+                        direction = 1, 
+                        guide = FALSE) + 
+  scale_x_continuous(limits = c(0, NA)) +
+  labs(title = "Top 25 Metropolitan Areas by Number of Significant Tornadoes",
+       subtitle = "1950-2019",
+       y = "", x = "") + 
+  theme_dark() )
+
+P_plot / US_map
+```
+
 Create a link/hover with map. https://twitter.com/kyle_e_walker/status/1397530708218892293 https://gist.github.com/walkerke/3628171efae66421c299c9f2dbee0f34
 
 ```{r}
 library(ggiraph)
-library(patchwork)
-
-Top25.sf <- TorCounts.df %>%
-  slice_max(nT, n = 25) %>%
-  st_as_sf()
 
 ( US_map <- ggplot(data = state_laea) +
-  geom_sf(fill = "transparent", size = 1) +
-  geom_sf_interactive(data = Top25.sf, color = "transparent",
-                      aes(fill = nT, data_id = GEOID)) + 
+  geom_sf(fill = 'gray30') +
+  geom_sf_interactive(data = Top25.sf, size = 0,
+                      mapping = aes(fill = nT, data_id = GEOID)) + 
   scale_fill_distiller(palette = "Greens",
                        direction = 1, 
                        guide = FALSE) + 
-  theme_void() )
+  theme_dark() )
 
-( Stick_plot <- ggplot(data = Top25.sf, 
-                       mapping = aes(x = nT, y = reorder(NAME, nT))) +
+( P_plot <- ggplot(data = Top25.sf, 
+                   mapping = aes(x = nT, y = reorder(NAME, nT), color = nT)) +
   geom_point_interactive(size = 2, mapping = aes(data_id = GEOID)) +
   scale_x_continuous(limits = c(0, NA)) +
-  labs(y= "", x = "") +
-  labs(title = "Top 25 Metropolitan Areas by Number of Tornadoes",
-       subtitle = "1950-2018",
+  labs(title = "Top 25 Metropolitan Areas by Number of Significant Tornadoes",
+       subtitle = "1950-2019",
        y = "", x = "") + 
-  theme_minimal() )
+  theme_dark() )
 
-girafe(ggobj = Stick_plot / US_map, width_svg = 10, height_svg = 6) %>%
+girafe(ggobj = P_plot / US_map, width_svg = 10, height_svg = 6) %>%
   girafe_options(opts_hover(css = "fill:cyan;"))
 ```
 
