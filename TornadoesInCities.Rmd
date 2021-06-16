@@ -5,7 +5,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-What cities have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and then count the number of tornadoes within each core-based statistical area.
+What cities (core-based statistical areas--cbsa) have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and then count the number of tornadoes within each core-based statistical area.
 
 Load packages.
 ```{r}
@@ -271,6 +271,7 @@ Both.sf <- CBSA.sf %>%
                    mapping = aes(x = Difference, y = reorder(NAME, Difference), 
                                  color = Difference > 0)) +
   geom_point(size = 2.5) +
+  geom_vline(xintercept = 0, color = "white") +
   scale_color_manual(values = c("#E69F00", "#CC79A7"),
                       guide = FALSE) +
   scale_x_continuous(limits = c(-75, 25)) +
@@ -280,5 +281,19 @@ Both.sf <- CBSA.sf %>%
   theme_dark() )
 
 P_plot / US_map
+```
+
+Get census data from these CBSAs. https://walker-data.com/tidycensus/articles/spatial-data.html
+```{r}
+options(tigris_use_cache = TRUE)
+
+( Augusta <- get_decennial(geography = "tract",
+                           variables = "P001001",
+                           year = 2000,
+                           state = "GA", 
+                           county = "Richmond", 
+                           geometry = TRUE,
+                           summary_var = "P001001") )
+
 ```
 
