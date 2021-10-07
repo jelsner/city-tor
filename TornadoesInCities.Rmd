@@ -19,7 +19,7 @@ Get USA boundary map from {tidycensus}.
 data(state_laea)
 
 state_laea <- state_laea |>
-  st_transform(crs = 32615)
+  st_transform(crs = 32615) 
 plot(state_laea)
 ```
 
@@ -36,7 +36,10 @@ unzip("tl_2019_us_cbsa.zip",
 
 CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
                    layer = "tl_2019_us_cbsa") |>
-  st_transform(crs = st_crs(state_laea))
+  st_transform(crs = st_crs(state_laea)) 
+
+#  mutate(GEOID_ST = substr(GEOID, start = 1, stop = 2)) |>
+#  filter(GEOID_ST %in% state_laea$GEOID)
 ```
 
 Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
@@ -51,7 +54,7 @@ Torn.sf <- st_read(dsn = "1950-2019-torn-aspath",
                    layer = "1950-2019-torn-aspath") |>
   st_transform(crs = st_crs(state_laea)) |>
   mutate(Late = yr >= 1985) |>
-  filter(mag >= 2)
+  filter(mag >= 0)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
@@ -157,28 +160,33 @@ Create a link/hover with map. https://twitter.com/kyle_e_walker/status/139753070
 library(ggiraph)
 
 ( US_map <- ggplot(data = state_laea) +
-  geom_sf(fill = 'gray30') +
+  geom_sf(fill = 'gray90', color = 'white', size = .15) +
   geom_sf_interactive(data = Top25.sf, size = 0,
-                      mapping = aes(fill = nT, data_id = GEOID)) + 
-  scale_fill_distiller(palette = "Greens",
+                      mapping = aes(fill = nT, color = nT, data_id = GEOID)) + 
+  scale_fill_distiller(palette = "Oranges",
                        direction = 1, 
                        guide = 'none') + 
-  theme_dark() )
+  scale_color_distiller(palette = "Oranges",
+                       direction = 1, 
+                       guide = 'none') + 
+  theme_void() )
 
 ( P_plot <- ggplot(data = Top25.sf, 
                    mapping = aes(x = nT, y = reorder(NAME, nT), color = nT)) +
   geom_point_interactive(size = 2, mapping = aes(data_id = GEOID)) +
-  scale_color_distiller(palette = "Greens",
+  scale_color_distiller(palette = "Oranges",
                         direction = 1, 
                         guide = 'none') +
   scale_x_continuous(limits = c(0, NA)) +
-  labs(title = "Top 25 Metropolitan Areas by Number of Significant Tornadoes",
+  labs(title = "Top 25 Metropolitan Areas by\n Number of Significant Tornadoes",
        subtitle = "1950-2019",
        y = "", x = "") + 
-  theme_dark() )
+    theme_minimal() +
+    theme(axis.ticks = element_blank(),
+          panel.grid  = element_blank())  )
 
-girafe(ggobj = P_plot / US_map, width_svg = 10, height_svg = 6) |>
-  girafe_options(opts_hover(css = "fill:cyan;"))
+girafe(ggobj = P_plot / US_map, width_svg = 8, height_svg = 6) |>
+  girafe_options(opts_hover(css = "fill:cyan;stroke:cyan;"))
 ```
 
 Counts grouped early and late
@@ -210,14 +218,34 @@ sum(Diff.df$Difference > 0)
 sum(Diff.df$Difference < 0)
 ```
 
+Map of changes across all CBSAs group by +/- and 0.
+```{r}
+Diff.df <-
+  Diff.df |>
+   mutate(Change = case_when(Difference == 0 ~ 'No Change',
+                             Difference < 0 ~ 'Decreasing',
+                             Difference > 0 ~ 'Increasing'))
+
+All.sf <- CBSA.sf |>
+  right_join(Diff.df,
+             by = "GEOID") 
+
+( US_map <- ggplot(data = state_laea) +
+  geom_sf(fill = 'gray90',color = 'white', size = .15) +
+  geom_sf(data = All.sf, size = 0,
+          mapping = aes(fill = Change)) + 
+  scale_fill_manual(values = c("#84E119", "#E11984", "#1984E1")) +
+  theme_void() )
+```
+
 Top 10 and bottom 10 combined.
 ```{r}
 Upward <- Diff.df |>
-  slice_max(Difference, n = 10) |>
+  slice_max(Difference, n = 100) |>
   mutate(Tendency = "Upward")
 
 Downward <- Diff.df |>
-  slice_min(Difference, n = 10) |>
+  slice_min(Difference, n = 100) |>
   mutate(Tendency = "Downward")
 
 Both <- rbind(Upward, Downward)
@@ -271,25 +299,31 @@ Both.sf <- CBSA.sf |>
             by = "GEOID") 
 
 ( US_map <- ggplot(data = state_laea) +
-  geom_sf(fill = 'gray30') +
+  geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = Both.sf, size = 0,
           mapping = aes(fill = Difference > 0)) + 
   scale_fill_manual(values = c("#E69F00", "#CC79A7"),
                     guide = 'none') +
-  theme_dark() )
+  theme_void() )
 
 ( P_plot <- ggplot(data = Both.sf, 
                    mapping = aes(x = Difference, y = reorder(NAME, Difference), 
                                  color = Difference > 0)) +
   geom_point(size = 2.5) +
-  geom_vline(xintercept = 0, color = "white") +
+  geom_vline(xintercept = 0, color = "gray80") +
   scale_color_manual(values = c("#E69F00", "#CC79A7"),
                       guide = 'none') +
-  scale_x_continuous(limits = c(-75, 25)) +
-  labs(title = "Top differences in significant tornado counts",
-       subtitle = "1985-2019 minus 1950-1984",
-       y = "", x = "") + 
-  theme_dark() )
+  scale_x_continuous(limits = c(-65, 65), position = "top") +
+  labs(title = "Top changes in significant tornado counts in CBSAs since 1985",
+       y = "", x = "Fewer tornadoes      More Tornadoes") + 
+  theme_minimal() +
+  theme(axis.title.x = element_text(margin = margin(t = 2, unit = "cm")), 
+        axis.ticks = element_blank(),
+        panel.grid  = element_blank(),
+        axis.line.x = element_line(arrow = grid::arrow(length = unit(2, "mm"), 
+                                                       angle = 20, 
+                                                       type = "closed", 
+                                                       ends = "both"))) )
 
 P_plot / US_map
 ```
