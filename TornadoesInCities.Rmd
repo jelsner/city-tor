@@ -54,7 +54,7 @@ Torn.sf <- st_read(dsn = "1950-2019-torn-aspath",
                    layer = "1950-2019-torn-aspath") |>
   st_transform(crs = st_crs(state_laea)) |>
   mutate(Late = yr >= 1985) |>
-  filter(mag >= 0)
+  filter(mag >= 2)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
@@ -87,7 +87,6 @@ ggplot() +
   labs(title = paste0("Approximate tracks of significant tornadoes\n", NameC),
        subtitle = paste0("Total numbers: 1950-1984 (purple): ", nT[1], 
                          paste0(", 1985-2019 (green): ", nT[2])))
-
 ```
 
 All metro areas. Also see {stars.Rmd} for creating a space-time object.
@@ -222,9 +221,9 @@ Map of changes across all CBSAs group by +/- and 0.
 ```{r}
 Diff.df <-
   Diff.df |>
-   mutate(Change = case_when(Difference == 0 ~ 'No Change',
-                             Difference < 0 ~ 'Decreasing',
-                             Difference > 0 ~ 'Increasing'))
+   mutate(Change = case_when(Difference == 0 ~ 'No change',
+                             Difference < 0 ~ 'Fewer since 1985',
+                             Difference > 0 ~ 'More since 1985'))
 
 All.sf <- CBSA.sf |>
   right_join(Diff.df,
@@ -235,7 +234,10 @@ All.sf <- CBSA.sf |>
   geom_sf(data = All.sf, size = 0,
           mapping = aes(fill = Change)) + 
   scale_fill_manual(values = c("#84E119", "#E11984", "#1984E1")) +
-  theme_void() )
+  labs(title = "                     The shifting U.S. tornado threat (EF2 or worse damage)",
+       caption = "    Gray regions are outside of core-based statistical areas or there were no EF2+ tornadoes either before or after 1985 in record from 1950-2019.") +
+  theme_void() +
+  theme(legend.title=element_blank()) )
 ```
 
 Top 10 and bottom 10 combined.
