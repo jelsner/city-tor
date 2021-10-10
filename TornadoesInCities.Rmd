@@ -12,6 +12,7 @@ Load packages.
 library(sf)
 library(tidyverse)
 library(tidycensus)
+library(tigris)
 ```
 
 Get USA boundary map from {tidycensus}.
@@ -42,10 +43,9 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
 #  filter(GEOID_ST %in% state_laea$GEOID)
 ```
 
-From the {tigris} package.
+Same from the {tigris} package.
 ```{r}
-library(tigris)
-# CBSA2.sf <- core_based_statistical_areas()
+CBSA2.sf <- core_based_statistical_areas()
 ```
 
 Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
@@ -338,14 +338,17 @@ P_plot / US_map
 
 ## How much more likely is a tornado that occurs away from an urban area to get a lower EF rating?
 ```{r}
-KS.sf <- states() |>
-  filter(STUSPS == "KS") 
+Plains <- c("TX", "OK", "KS", "NE", "SD", "ND")
+Area.sfc <- states() |>
+  filter(STUSPS %in% Plains) |>
+  st_union()
 
-KS_Urban2020.sf <- urban_areas(year = 2020) |>
-  st_crop(KS.sf)
+Urban2020.sf <- urban_areas(year = 2020) |>
+#   st_intersection(Area.sfc)
+  st_crop(Area.sfc) # crops to the bounding box, not the area polygon
 
-KS_Urban2012.sf <- urban_areas(year = 2012) |>
-  st_crop(KS.sf)
+#KS_Urban2012.sf <- urban_areas(year = 2012) |>
+#  st_crop(KS.sf)
 ```
 
 Map check
@@ -353,52 +356,96 @@ Map check
 library(tmap)
 tmap_mode("view")
 
-tm_shape(KS.sf) +
+tm_shape(Area.sf) +
   tm_borders() +
-  tm_shape(KS_Urban2020.sf) +
-  tm_borders() +
-  tm_shape(KS_Urban2012.sf) +
-  tm_borders(col = "red")
+  tm_shape(Urban2020.sf) +
+  tm_borders() 
 ```
 
-Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
+Get the tornado tracks. Tracks that recorded at least some damage somewhere since 2007 (start of EF rating).
 ```{r}
-KS_Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
-                      layer = "1950-2019-torn-aspath") |>
-  st_transform(crs = st_crs(KS.sf)) |>
-  filter(mag >= 0 & yr >= 2000 & st %in% c("OK", "KS", "CO", "MO", "NE"))
-
-tm_shape(KS_Urban2012.sf) +
-  tm_borders() +
-  tm_shape(KS_Torn.sf) +
-  tm_lines()
+Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+                   layer = "1950-2019-torn-aspath") |>
+  st_transform(crs = st_crs(Area.sf)) |>
+  filter(mag >= 0 & yr >= 2007) |>
+  st_crop(Area.sfc)
 ```
 
-Mark all tornadoes that intersect urban areas of Kansas.
+Mark all tornadoes that intersect urban areas.
 ```{r}
-Intersects <- KS_Urban2012.sf |>
-  st_intersects(KS_Torn.sf) |>
+Intersects <- Urban2020.sf |>
+  st_intersects(Torn.sf) |>
   unlist()
 
-KS_Torn.sf$row <- 1:nrow(KS_Torn.sf)
+Torn.sf$row <- 1:nrow(Torn.sf)
 
-KS_Torn.sf <- KS_Torn.sf |>
+Torn.sf <- Torn.sf |>
   mutate(Urban = row %in% Intersects)
 
-tm_shape(KS_Urban2012.sf) +
+tm_shape(Urban2020.sf) +
   tm_borders() +
-  tm_shape(KS_Torn.sf[KS_Torn.sf$Urban, ]) +
+  tm_shape(Torn.sf[Torn.sf$Urban, ]) +
   tm_lines(col = "red")
 ```
 
 Group tornadoes by whether urban or not and examine EF rating statistics.
 ```{r}
-KS_Torn.sf |>
+Torn.sf |>
+  st_drop_geometry() |>
   group_by(Urban) |>
-  summarize(Avg = mean(mag),
-            Median = median(mag))
+  summarize(nT = n(),
+            Avg = mean(mag),
+            Median = median(mag),
+            Min = min(mag),
+            Max = max(mag))
 ```
-  
+
+Create a cumulative logistic model to predict the EF rating based on whether or not the tornado was in or near a urban area. See PredictTorFreqByEF.Rmd in EF-dist project.
+
+## Describing the ordered distribution of maximum EF ratings with intercepts
+
+We begin with a histogram of maximum EF rating per tornado.
+```{r}
+Torn.sf <- Torn.sf |>
+  mutate(maxEF = as.integer(mag)) 
+
+( FreqByEF.df <- Torn.sf |>
+  st_drop_geometry() |>
+  group_by(Urban, maxEF) |>
+  summarize(nT = n()) |>
+    mutate(pr_k = case_when(Urban ~ nT / sum(nT),
+                          !Urban ~ nT / sum(nT)),
+           cum_pr_k = cumsum(pr_k),
+           Names = case_when(Urban ~ "Urban",
+                             !Urban ~ "Rural")) )
+ggplot(FreqByEF.df, 
+       mapping = aes(x = maxEF, y = rF)) + 
+  geom_point() + 
+  geom_segment(aes(xend = maxEF, yend = 0)) +
+  facet_wrap(~ Names) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "Maximum EF Rating", y = "Percentage",
+      title = "Tornadoes are more likely to get a higher damage rating in/near urban areas") +
+  theme_minimal()
+
+ggplot(FreqByEF.df, aes(x = maxEF, y = cum_pr_k, color = Names)) +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_x_continuous(minor_breaks = 0:5) +
+    xlab("Maximum EF Rating") +
+    ylab("Cumulative Proportion") +
+  theme_minimal()
+```
+### Figure: Relative frequency of tornadoes by maximum EF rating group by urban and rural occurrence. Only tornadoes occurring from Texas to North Dakota are considered.
+
+Compute distances
+```{r}
+distFromUrban <- numeric()
+for(i in seq_len(nrow(Torn.sf))){
+  distFromUrban[i] <- min(st_distance(Torn.sf[i, ], Urban2020.sf))
+}
+```
 
 Get census data from these CBSAs. https://walker-data.com/tidycensus/articles/spatial-data.html
 ```{r}
