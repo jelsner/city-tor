@@ -5,7 +5,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-What cities (core-based statistical areas--cbsa) have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and then count the number of tornadoes within each core-based statistical area.
+What cities (core-based statistical areas--cbsa) have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and count the number of tornadoes within each core-based statistical area during each epoch.
 
 Load packages.
 ```{r}
@@ -40,6 +40,12 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
 
 #  mutate(GEOID_ST = substr(GEOID, start = 1, stop = 2)) |>
 #  filter(GEOID_ST %in% state_laea$GEOID)
+```
+
+From the {tigris} package.
+```{r}
+library(tigris)
+# CBSA2.sf <- core_based_statistical_areas()
 ```
 
 Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
@@ -329,6 +335,70 @@ Both.sf <- CBSA.sf |>
 
 P_plot / US_map
 ```
+
+## How much more likely is a tornado that occurs away from an urban area to get a lower EF rating?
+```{r}
+KS.sf <- states() |>
+  filter(STUSPS == "KS") 
+
+KS_Urban2020.sf <- urban_areas(year = 2020) |>
+  st_crop(KS.sf)
+
+KS_Urban2012.sf <- urban_areas(year = 2012) |>
+  st_crop(KS.sf)
+```
+
+Map check
+```{r}
+library(tmap)
+tmap_mode("view")
+
+tm_shape(KS.sf) +
+  tm_borders() +
+  tm_shape(KS_Urban2020.sf) +
+  tm_borders() +
+  tm_shape(KS_Urban2012.sf) +
+  tm_borders(col = "red")
+```
+
+Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
+```{r}
+KS_Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+                      layer = "1950-2019-torn-aspath") |>
+  st_transform(crs = st_crs(KS.sf)) |>
+  filter(mag >= 0 & yr >= 2000 & st %in% c("OK", "KS", "CO", "MO", "NE"))
+
+tm_shape(KS_Urban2012.sf) +
+  tm_borders() +
+  tm_shape(KS_Torn.sf) +
+  tm_lines()
+```
+
+Mark all tornadoes that intersect urban areas of Kansas.
+```{r}
+Intersects <- KS_Urban2012.sf |>
+  st_intersects(KS_Torn.sf) |>
+  unlist()
+
+KS_Torn.sf$row <- 1:nrow(KS_Torn.sf)
+
+KS_Torn.sf <- KS_Torn.sf |>
+  mutate(Urban = row %in% Intersects)
+
+tm_shape(KS_Urban2012.sf) +
+  tm_borders() +
+  tm_shape(KS_Torn.sf[KS_Torn.sf$Urban, ]) +
+  tm_lines(col = "red")
+```
+
+Group tornadoes by whether urban or not and examine EF rating statistics.
+```{r}
+KS_Torn.sf |>
+  group_by(Urban) |>
+  summarize(Avg = mean(mag),
+            Median = median(mag))
+```
+  
 
 Get census data from these CBSAs. https://walker-data.com/tidycensus/articles/spatial-data.html
 ```{r}
