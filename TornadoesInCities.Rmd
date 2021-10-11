@@ -362,12 +362,19 @@ tm_shape(Area.sf) +
   tm_borders() 
 ```
 
-Get the tornado tracks. Tracks that recorded at least some damage somewhere since 2007 (start of EF rating).
+Get the tornado tracks since 2007 (start of EF rating).
 ```{r}
 Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
                    layer = "1950-2019-torn-aspath") |>
   st_transform(crs = st_crs(Area.sf)) |>
   filter(mag >= 0 & yr >= 2007) |>
+  mutate(Length = len * 1609.34,
+         Width = wid * .9144,
+         maxEF = mag,
+         Date = as.Date(date),
+         Year = yr,
+         Month = mo) |>
+  select(Date, Year, Month, maxEF, Length, Width, slat, slon) |>
   st_crop(Area.sfc)
 ```
 
@@ -394,32 +401,40 @@ Torn.sf |>
   st_drop_geometry() |>
   group_by(Urban) |>
   summarize(nT = n(),
-            Avg = mean(mag),
-            Median = median(mag),
-            Min = min(mag),
-            Max = max(mag))
+            Avg = mean(maxEF),
+            Median = median(maxEF),
+            Min = min(maxEF),
+            Max = max(maxEF),
+            AvgL = mean(Length),
+            MedianL = median(Length),
+            AvgW = mean(Width),
+            MedianW = median(Width))
 ```
 
-Create a cumulative logistic model to predict the EF rating based on whether or not the tornado was in or near a urban area. See PredictTorFreqByEF.Rmd in EF-dist project.
+On average the EF rating is lower for tornadoes in rural areas. Before jumping to conclusions we need to examine other factors like the fact that rural areas are much larger in the west.
 
-## Describing the ordered distribution of maximum EF ratings with intercepts
+Use a cumulative logistic model to quantify the effect rural areas have on the EF rating conditioning on path characteristics, location, and month.
 
-We begin with a histogram of maximum EF rating per tornado.
+Are tornadoes that affect urban areas longer? Yes. Also what about demographic data. Are damaging tornadoes in rich urban areas more likely to get a higher rating compared with damaging tornadoes in poor urban areas? This is an interesting question but is hard to answer given the gradient in wealth within large urban areas. Maybe using {tidycensus} https://twitter.com/mrworthington/status/1446910612471173121
+
+Start by describing the ordered distribution of maximum EF ratings with intercepts. Begin with a histogram of maximum EF rating per tornado.
 ```{r}
-Torn.sf <- Torn.sf |>
-  mutate(maxEF = as.integer(mag)) 
+#devtools::install_github("rmcelreath/rethinking")
 
 ( FreqByEF.df <- Torn.sf |>
   st_drop_geometry() |>
   group_by(Urban, maxEF) |>
   summarize(nT = n()) |>
     mutate(pr_k = case_when(Urban ~ nT / sum(nT),
-                          !Urban ~ nT / sum(nT)),
+                           !Urban ~ nT / sum(nT)),
            cum_pr_k = cumsum(pr_k),
+           log_cum_odds = rethinking::logit(cum_pr_k),
+           ys = cum_pr_k - pr_k,
            Names = case_when(Urban ~ "Urban",
                              !Urban ~ "Rural")) )
+
 ggplot(FreqByEF.df, 
-       mapping = aes(x = maxEF, y = rF)) + 
+       mapping = aes(x = maxEF, y = pr_k)) + 
   geom_point() + 
   geom_segment(aes(xend = maxEF, yend = 0)) +
   facet_wrap(~ Names) +
@@ -428,7 +443,8 @@ ggplot(FreqByEF.df,
       title = "Tornadoes are more likely to get a higher damage rating in/near urban areas") +
   theme_minimal()
 
-ggplot(FreqByEF.df, aes(x = maxEF, y = cum_pr_k, color = Names)) +
+ggplot(FreqByEF.df,
+       mapping = aes(x = maxEF, y = cum_pr_k, color = Names)) +
   geom_point() +
   geom_line() +
   scale_y_continuous(limits = c(0, 1)) +
@@ -436,10 +452,209 @@ ggplot(FreqByEF.df, aes(x = maxEF, y = cum_pr_k, color = Names)) +
     xlab("Maximum EF Rating") +
     ylab("Cumulative Proportion") +
   theme_minimal()
-```
-### Figure: Relative frequency of tornadoes by maximum EF rating group by urban and rural occurrence. Only tornadoes occurring from Texas to North Dakota are considered.
 
-Compute distances
+ggplot(FreqByEF.df,
+       mapping = aes(x = maxEF, y = log_cum_odds, color = Names)) +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(NA, 10) ) +
+  scale_x_continuous(limits = c(0, 4), minor_breaks = 0:4) +
+  xlab("Maximum EF Rating") +
+  ylab("Log-Cumulative-Odds") +
+  theme_minimal()
+
+ggplot(FreqByEF.df, 
+       mapping = aes(x = maxEF, y = cum_pr_k)) +
+  geom_segment(aes(x = maxEF, xend = maxEF, y = ys, yend = cum_pr_k), size = 1.3, color = "gray70") +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~ Names) +
+  scale_y_continuous(limits = c(0, 1)) +
+    xlab("Maximum EF Rating") +
+    ylab("Cumulative Proportion") +
+  theme_minimal()
+```
+### Figure: Relative frequency of tornadoes by maximum EF rating grouped by urban and rural occurrence. Only tornadoes occurring from Texas to North Dakota are considered. Log-cumulative odds of a tornado by maximum EF rating grouped by urban and rural occurrence.
+
+Note that the cumulative logit for the highest EF rating is infinity. This is because log(1/(1 - 1)) = $\infty$. This is always the case so we do not need a parameter for it. We get it for free from the law of total probability. So for $K$ = 6 possible maximum EF ratings we only need $K$ - 1 = 5 intercepts.
+
+Cumulative probability and ordered likelihood. The horizontal axis displays possible observable damage ratings, from 0 through 5. The vertical axis displays cumulative probability. The points show cumulative probability. These keep getting higher with each successive EF rating. The gray line segments show the discrete probability of each EF rating. These are the likelihoods that go into Bayes’ theorem.
+
+In code form
+$$
+\begin{aligned} 
+\hbox{R}_i &\sim \hbox{Ordered}(\mathbf{p}) \\ 
+\hbox{logit}(p_k) &= \alpha_k \\
+\alpha_k &\sim \hbox{Normal}(0, 10)
+\end{aligned}
+$$
+The Ordered distribution is a categorical distribution that takes a vector $p = \{p_0, p_1, p_2, p_3, p_4\}$ of probabilities for each EF rating below the highest (EF5). Each response value $k$ in this vector is defined by its link to an intercept parameter ($\alpha_k$).
+
+To include predictor variables, we define the log-cumulative-odds of each EF rating $k$ as a sum of its intercept $\alpha_k$ and a typical linear model. Suppose for  example we want to add a predictor $x$ to the model. We do this by defining a linear model $\phi_i = \beta x_i$. Then each cumulative logit becomes
+$$
+\begin{aligned}
+\log \frac{\Pr(y_i \le k)}{1 - \Pr(y_i \le k)} &= \alpha_k - \phi_i \\
+\phi_i &= \beta x_i
+\end{aligned}
+$$
+
+The form ensures the correct ordering of the EF ratings while allowing for changes in the likelihood of each individual value as the predictor $x_i$ changes value. As the log-cumulative odds of every EF value ($k$) below the maximum decreases, the probability mass shifts upwards toward higher EF ratings.
+
+$$
+\phi_i = \beta_{Year}Year_i + \beta_L L_i + \beta_W W_i + \beta_{Urban}Urban_i + \beta_M M_i
+$$
+
+where Year_i indicates the year of tornado i and L_i and W_i indicate the length and width of damage path for tornado i. Month (M_i) is a random offset so the coefficient \beta_M is a vector of length 12. 
+
+
+Use the {brms} package. Start by setting the family and the model formula. Get priors. 
+```{r}
+library(brms)
+Torn.sf$maxEF1 <- Torn.sf$maxEF + 1 # can not use 0
+
+family <- brms::cumulative(threshold = "flexible")
+formula <- maxEF1 ~ 1
+
+get_prior(formula, 
+          data = Torn.sf, 
+          family = family)
+
+prior <- brm(formula = formula,
+             data = Torn.sf,
+             family = family,
+             prior = set_prior("student_t(7, 0, 10)", class = "Intercept"),
+             sample_prior = "only",
+             seed = 9121)
+prior_out <- predict(prior, probs = c(0, 1))
+head(prior_out)
+
+fit0 <- brm(formula = formula,
+           data = Torn.sf,
+           family = family,
+           prior = set_prior("student_t(7, 0, 10)", class = "Intercept"),
+           seed = 9121)
+fixef(fit0)
+
+fit0_out <- predict(fit0, probs = c(0, 1))
+head(fit0_out)
+```
+
+Since there are a lot of tornadoes, the posterior for each intercept is quite precisely estimated, as we can see from the small standard deviations. To get cumulative probabilities back:
+```{r}
+rethinking::logistic(fixef(fit0))
+```
+
+These are the same (nearly) as the values in `cum_pr_k` that we computed above. But now we also have a posterior distribution around these values, and we’re ready to add predictor variables to the model.
+
+Model with predictors. Start with some default priors (for example `"normal(0,5)"` for the `class = "b"`). Sample from the priors and check the predictive distribution of the response. Adjust the priors accordingly. https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+```{r}
+df <- Torn.sf |>
+  st_drop_geometry() |>
+  mutate(PathArea = Length * Width,
+         PathAreaS = scale(PathArea))
+
+family <- brms::cumulative(threshold = "flexible")
+formula <- maxEF1 ~ Urban
+
+get_prior(formula, 
+          data = df, 
+          family = family)
+
+prior2 <- brm(formula = formula,
+              data = df,
+              family = family,
+              prior = c(set_prior("normal(0, 1)", class = "b"),
+                        set_prior("student_t(3, 0, 2.5)", class = "Intercept")),
+              sample_prior = "only",
+              control = list(max_treedepth = 15),
+              seed = 9121)
+
+prior_out2 <- predict(prior2, probs = c(0, 1))
+```
+
+With `normal(0, 5)` the probabilities are highest for the first and sixth categories. This u-shaped distribution is diminished by using `normal(0, 1)`.
+
+Fit the model.
+```{r}
+formula1 <- maxEF1 ~ Urban
+formula2 <- maxEF1 ~ Urban + PathAreaS
+fit2 <- brm(formula = formula2,
+            data = df,
+            family = family,
+            prior = c(set_prior("normal(0, 1)", class = "b"),
+                     set_prior("student_t(3, 0, 2.5)", class = "Intercept")),
+            control = list(max_treedepth = 15),
+            seed = 78121)
+
+fixef(fit2)
+
+#save(fit2, file = "fit2.RData")
+#load("fit1.RData")
+fit1_out <- predict(fit1, probs = c(0, 1))
+```
+
+Extracting and visualizing tidy draws from {brms} models. https://cran.r-project.org/web/packages/tidybayes/vignettes/tidy-brms.html
+```{r}
+library(tidybayes)
+
+get_variables(fit1)
+
+fit2 |>
+  spread_draws(b_LengthS, b_UrbanTRUE) |>
+  head(20)
+
+fit2 |>
+  spread_draws(b_LengthS, b_UrbanTRUE) |>
+  median_qi(b_LengthS, b_UrbanTRUE)
+
+fit2 |>
+  gather_draws(b_LengthS, b_UrbanTRUE) |>
+  median_qi()
+```
+
+Add a plot. Fixed effects. Highest density interval.
+```{r}
+( fit2 |> 
+  gather_draws(b_LengthS, b_UrbanTRUE) |>
+  median_hdi(.width = c(.95, .66)) |>
+  ggplot(aes(y = .variable, x = .value, xmin = .lower, xmax = .upper)) +
+  geom_pointintervalh() +
+  geom_vline(xintercept = 0, col = "gray70") +
+  scale_y_discrete(labels = c("Path Length", "Urban?")) +
+#  scale_x_continuous(limits = c(NA, NA), breaks = c(-.2, 0, .2)) +
+  ylab("") + xlab("Coefficient Value") +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) )
+```
+
+Conditional effect of rural on EF rating.
+```{r}
+gg <- conditional_effects(fit1, categorical = TRUE)
+ggUrban <- gg[[1]] |>
+  filter(cats__ != 1)
+levels(ggUrban$cats__) <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
+
+( pfit2 <- ggplot(ggUrban, 
+       mapping = aes(x = Urban, y = estimate__ * 100, label = cats__, color = Urban)) +
+  geom_text() +
+  scale_color_manual(values = c("#1FDE92", "#DE1F6B"), guide = "none") +
+  scale_y_log10(limits = c(.01, 100), labels = c(".01%", ".1%", "1%", "10%", "100%"), breaks = c(.01, .1, 1, 10, 100)) +
+#  scale_y_log10() +
+  scale_x_discrete(labels = c("Rural", "Urban")) + 
+  labs(caption = "Chance a tornado causes EF-level damage given location. Data source: NOAA",
+       title = "Tornadoes impacting rural areas are less likely to get a higher\ndamage rating relative to those impacting urban areas",
+       x = "", y = "") +
+  theme_minimal() )
+```
+
+
+
+
+
+
+
+Compute the distance between the tornado and the nearest urban polygon.
 ```{r}
 distFromUrban <- numeric()
 for(i in seq_len(nrow(Torn.sf))){
