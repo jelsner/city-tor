@@ -337,6 +337,9 @@ P_plot / US_map
 ```
 
 ## How much more likely is a tornado that occurs away from an urban area to get a lower EF rating?
+
+How much less likely (on average) is EF3 (or worse damage) to be found after a tornado impact in rural areas compared with urban areas?
+
 ```{r}
 Plains <- c("TX", "OK", "KS", "NE", "SD", "ND")
 Area.sfc <- states() |>
@@ -551,7 +554,9 @@ Model with predictors. Start with some default priors (for example `"normal(0,5)
 df <- Torn.sf |>
   st_drop_geometry() |>
   mutate(PathArea = Length * Width,
-         PathAreaS = scale(PathArea))
+         PathAreaS = log10(PathArea),
+         YearS = scale(Year),
+         LonS = scale(slon))
 
 family <- brms::cumulative(threshold = "flexible")
 formula <- maxEF1 ~ Urban
@@ -574,10 +579,20 @@ prior_out2 <- predict(prior2, probs = c(0, 1))
 
 With `normal(0, 5)` the probabilities are highest for the first and sixth categories. This u-shaped distribution is diminished by using `normal(0, 1)`.
 
-Fit the model.
+Fit models. Examine the difference in the Urban term between a model with only the Urban term and models that use a more complete set of explanatory variables.
 ```{r}
+df$UrbanI <- as.integer(df$Urban)
+df$maxEF1I <- as.integer(df$maxEF1)
+
 formula1 <- maxEF1 ~ Urban
+formula1a <- maxEF1I ~ cs(Urban); family = "sratio"
 formula2 <- maxEF1 ~ Urban + PathAreaS
+formula3 <- maxEF1 ~ Urban + PathAreaS + YearS
+formula4 <- maxEF1 ~ Urban + PathAreaS + YearS + LonS
+formula4b <- maxEF1 ~ Urban + PathAreaS + LonS
+formula4a <- maxEF1I ~ cs(Urban) + PathAreaS + YearS + LonS; family = "sratio"
+formula5 <- maxEF1 ~ Urban*YearS + PathAreaS + LonS
+formula6 <- maxEF1 ~ Urban*YearS + PathAreaS + LonS + (1|Month)
 fit2 <- brm(formula = formula2,
             data = df,
             family = family,
@@ -588,10 +603,48 @@ fit2 <- brm(formula = formula2,
 
 fixef(fit2)
 
-#save(fit2, file = "fit2.RData")
+#save(fit4a, file = "fit4a.RData")
 #load("fit1.RData")
 fit1_out <- predict(fit1, probs = c(0, 1))
 ```
+
+The positive coefficient on the UrbanTRUE[1] indicates that when we go from rural to urban the proportion of storms rated EF1 relative to EF0 is higher. The positive coefficient on the UrbanTRUE[2] indicates that when we go from rural to urban areas the proportion of storms rated EF2 relative to EF1 is higher but there is no statistical significance for the higher EF ratings.
+
+Compare models.
+```{r}
+fit1 <- add_criterion(fit1, "waic")
+fit2 <- add_criterion(fit2, "waic")
+fit3 <- add_criterion(fit3, "waic")
+fit4 <- add_criterion(fit4, "waic")
+fit5 <- add_criterion(fit5, "waic")
+fit6 <- add_criterion(fit6, "waic")
+
+
+loo_compare(fit1, fit2, fit3, fit4, fit5, fit6, criterion = "waic")
+
+fit1 <- add_criterion(fit1, "loo")
+fit2 <- add_criterion(fit2, "loo")
+fit3 <- add_criterion(fit3, "loo")
+fit4 <- add_criterion(fit4, "loo")
+fit5 <- add_criterion(fit5, "loo")
+fit6 <- add_criterion(fit6, "loo")
+fit4b <- add_criterion(fit4b, "loo")
+
+loo_compare(fit1, fit2, criterion = "loo")
+```
+
+Test for practical equivalence.
+```{r}
+library(bayestestR)
+equivalence_test(fit1)
+equivalence_test(fit2)
+```
+
+{lme4} package.
+```{r}
+library(lme4)
+```
+
 
 Extracting and visualizing tidy draws from {brms} models. https://cran.r-project.org/web/packages/tidybayes/vignettes/tidy-brms.html
 ```{r}
@@ -630,8 +683,9 @@ Add a plot. Fixed effects. Highest density interval.
 
 Conditional effect of rural on EF rating.
 ```{r}
-gg <- conditional_effects(fit1, categorical = TRUE)
+gg <- conditional_effects(fit4b, categorical = TRUE)
 ggUrban <- gg[[1]] |>
+#    mutate(maxEF = as.integer(cats__) - 1)
   filter(cats__ != 1)
 levels(ggUrban$cats__) <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
 
@@ -646,8 +700,67 @@ levels(ggUrban$cats__) <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
        title = "Tornadoes impacting rural areas are less likely to get a higher\ndamage rating relative to those impacting urban areas",
        x = "", y = "") +
   theme_minimal() )
+
+gg <- conditional_effects(fit2, categorical = TRUE)
+x <- gg[[1]] |>
+  mutate(maxEF = as.integer(cats__) - 1) |>
+  filter(maxEF >= 3) |>
+  group_by(Urban) |>
+  summarize(sumEstimate = sum(estimate__)) |>
+  pull(sumEstimate)
+(x[2] - x[1]) / x[2]
+
 ```
 
+How much less likely (on average) is EF3 (or worse damage) to be found after a tornado impact in rural areas compared with urban areas?
+
+The effect size of the Rural term diminishes with additional significant factors in the model. The mean reduction in the chance of at least EF3 damage in rural areas (2.4%) relative to urban areas (5.6%) is about 57%. The _conditional_ mean reduction in the chance of at least EF3 damage in rural areas (1.15%) relative to urban areas (1.96%) is about 41%.
+
+Posterior predictions on the cumulative probability scale.
+```{r}
+library(modelr)
+library(tidyr)
+
+fitted1 <- df |>
+  data_grid(Urban = c(TRUE, FALSE)) |>
+  add_epred_draws(fit1, ndraws = 100)
+
+out1 <- fitted1 |>
+  group_by(.draw) |>
+  arrange(.category) |>
+  mutate(cs = cumsum(.epred),
+         Model = "fit1") 
+levels(out1$.category) <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
+
+fitted2 <- df |>
+  data_grid(PathAreaS = median(df$PathAreaS), 
+            Urban = c(TRUE, FALSE)) |>
+  add_epred_draws(fit2, ndraws = 100)
+
+out2 <- fitted2 |>
+  group_by(.draw) |>
+  arrange(.category) |>
+  mutate(cs = cumsum(.epred),
+         Model = "fit2") 
+levels(out2$.category) <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
+
+out <- rbind(out1, out2)
+
+( p_model <- ggplot(out[out$.category != "EF0", ], 
+       mapping = aes(x = .epred, y = Urban)) +
+  stat_interval() +
+  scale_y_discrete(labels = c("Rural", "Urban")) +
+  coord_flip() +
+  scale_x_log10(limits = c(NA, 1)) +
+  facet_wrap(~ Model + .category, nrow = 2) +
+  ylab("Urban/Rural") +
+  labs(title = "Estimated chance of a tornado causing EF-level damage",
+       subtitle = "Rural versus urban areas",
+       x = "", y = "", colour = "Confidence\ninterval", caption = "U.S. Great Plains over the period 2007-2019") +
+  theme_minimal() )
+```
+
+Be careful here. Size influences urban/rural (mean path area 4.4 sq km for tornadoes hitting urban areas and 1.7 sq km for tornadoes in rural areas) and both size and urban/rural influence EF rating. This creates a chain in a DAG.
 
 
 
