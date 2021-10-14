@@ -12,7 +12,6 @@ Load packages.
 library(sf)
 library(tidyverse)
 library(tidycensus)
-library(tigris)
 ```
 
 Get USA boundary map from {tidycensus}.
@@ -45,7 +44,7 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
 
 Same from the {tigris} package.
 ```{r}
-CBSA2.sf <- core_based_statistical_areas()
+CBSA2.sf <- tigris::core_based_statistical_areas()
 ```
 
 Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
@@ -336,22 +335,22 @@ Both.sf <- CBSA.sf |>
 P_plot / US_map
 ```
 
-## How much more likely is a tornado that occurs away from an urban area to get a lower EF rating?
+## EF ratings rural versus urban impacts
 
-How much less likely (on average) is EF3 (or worse damage) to be found after a tornado impact in rural areas compared with urban areas?
+Whether a tornado hits an urban area or not determines to some extent the amount damage that occurs. Here we attempt to quantify the magnitude of this extent. Specifically we ask how much less likely (on average) is EF3 (or worse) damage following a tornado impact in rural areas compared to urban areas?
 
 ```{r}
 Plains <- c("TX", "OK", "KS", "NE", "SD", "ND")
-Area.sfc <- states() |>
-  filter(STUSPS %in% Plains) |>
-  st_union()
+Area.sfc <- USAboundaries::us_states(states = Plains) |>
+  st_union() 
 
-Urban2020.sf <- urban_areas(year = 2020) |>
-#   st_intersection(Area.sfc)
-  st_crop(Area.sfc) # crops to the bounding box, not the area polygon
+Urban.sf <- tigris::urban_areas()
 
-#KS_Urban2012.sf <- urban_areas(year = 2012) |>
-#  st_crop(KS.sf)
+Area.sfc <- Area.sfc |>
+  st_transform(crs = st_crs(Urban.sf))
+
+Urban.sf <- Urban.sf |>
+  st_crop(Area.sfc)
 ```
 
 Map check
@@ -359,9 +358,9 @@ Map check
 library(tmap)
 tmap_mode("view")
 
-tm_shape(Area.sf) +
+tm_shape(Area.sfc) +
   tm_borders() +
-  tm_shape(Urban2020.sf) +
+  tm_shape(Urban.sf) +
   tm_borders() 
 ```
 
@@ -369,7 +368,7 @@ Get the tornado tracks since 2007 (start of EF rating).
 ```{r}
 Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
                    layer = "1950-2019-torn-aspath") |>
-  st_transform(crs = st_crs(Area.sf)) |>
+  st_transform(crs = st_crs(Urban.sf)) |>
   filter(mag >= 0 & yr >= 2007) |>
   mutate(Length = len * 1609.34,
          Width = wid * .9144,
@@ -383,7 +382,7 @@ Torn.sf <- st_read(dsn = "1950-2019-torn-aspath",
 
 Mark all tornadoes that intersect urban areas.
 ```{r}
-Intersects <- Urban2020.sf |>
+Intersects <- Urban.sf |>
   st_intersects(Torn.sf) |>
   unlist()
 
@@ -392,15 +391,17 @@ Torn.sf$row <- 1:nrow(Torn.sf)
 Torn.sf <- Torn.sf |>
   mutate(Urban = row %in% Intersects)
 
-tm_shape(Urban2020.sf) +
+tm_shape(Urban.sf) +
   tm_borders() +
   tm_shape(Torn.sf[Torn.sf$Urban, ]) +
-  tm_lines(col = "red")
+  tm_lines(col = "red") +
+  tm_shape(Torn.sf[!Torn.sf$Urban, ]) +
+  tm_lines(col = "blue")
 ```
 
-Group tornadoes by whether urban or not and examine EF rating statistics.
+Group tornadoes by across the urban/rural divide and examine EF rating statistics.
 ```{r}
-Torn.sf |>
+( UrbanRuralStats.df <- Torn.sf |>
   st_drop_geometry() |>
   group_by(Urban) |>
   summarize(nT = n(),
@@ -411,7 +412,7 @@ Torn.sf |>
             AvgL = mean(Length),
             MedianL = median(Length),
             AvgW = mean(Width),
-            MedianW = median(Width))
+            MedianW = median(Width)) )
 ```
 
 On average the EF rating is lower for tornadoes in rural areas. Before jumping to conclusions we need to examine other factors like the fact that rural areas are much larger in the west.
@@ -419,6 +420,9 @@ On average the EF rating is lower for tornadoes in rural areas. Before jumping t
 Use a cumulative logistic model to quantify the effect rural areas have on the EF rating conditioning on path characteristics, location, and month.
 
 Are tornadoes that affect urban areas longer? Yes. Also what about demographic data. Are damaging tornadoes in rich urban areas more likely to get a higher rating compared with damaging tornadoes in poor urban areas? This is an interesting question but is hard to answer given the gradient in wealth within large urban areas. Maybe using {tidycensus} https://twitter.com/mrworthington/status/1446910612471173121
+
+DAGs and confounding variables
+https://journals.sagepub.com/doi/full/10.1177/2515245917745629
 
 Start by describing the ordered distribution of maximum EF ratings with intercepts. Begin with a histogram of maximum EF rating per tornado.
 ```{r}
@@ -579,7 +583,7 @@ prior_out2 <- predict(prior2, probs = c(0, 1))
 
 With `normal(0, 5)` the probabilities are highest for the first and sixth categories. This u-shaped distribution is diminished by using `normal(0, 1)`.
 
-Fit models. Examine the difference in the Urban term between a model with only the Urban term and models that use a more complete set of explanatory variables.
+Fit models. Examine the difference in the Urban term between a model with only the Urban term and models that use a more complete set of explanatory variables. Maybe use log of path area to scale. Try cs(PathAreaS) to see if the relationship changes for different EF ratings.
 ```{r}
 df$UrbanI <- as.integer(df$Urban)
 df$maxEF1I <- as.integer(df$maxEF1)
@@ -587,21 +591,25 @@ df$maxEF1I <- as.integer(df$maxEF1)
 formula1 <- maxEF1 ~ Urban
 formula1a <- maxEF1I ~ cs(Urban); family = "sratio"
 formula2 <- maxEF1 ~ Urban + PathAreaS
+formula2a <- maxEF1 ~ Urban + cs(PathAreaS); family = "sratio"
+formula2b <- maxEF1 ~ Urban * PathAreaS
 formula3 <- maxEF1 ~ Urban + PathAreaS + YearS
 formula4 <- maxEF1 ~ Urban + PathAreaS + YearS + LonS
 formula4b <- maxEF1 ~ Urban + PathAreaS + LonS
 formula4a <- maxEF1I ~ cs(Urban) + PathAreaS + YearS + LonS; family = "sratio"
 formula5 <- maxEF1 ~ Urban*YearS + PathAreaS + LonS
 formula6 <- maxEF1 ~ Urban*YearS + PathAreaS + LonS + (1|Month)
-fit2 <- brm(formula = formula2,
+fit2b <- brm(formula = formula2b,
             data = df,
             family = family,
             prior = c(set_prior("normal(0, 1)", class = "b"),
-                     set_prior("student_t(3, 0, 2.5)", class = "Intercept")),
+                     set_prior("student_t(3, 0, 2.5)", 
+                               class = "Intercept")),
             control = list(max_treedepth = 15),
-            seed = 78121)
+            chains = 2,
+            seed = 7818721)
 
-fixef(fit2)
+fixef(fit1)
 
 #save(fit4a, file = "fit4a.RData")
 #load("fit1.RData")
@@ -635,9 +643,8 @@ loo_compare(fit1, fit2, criterion = "loo")
 
 Test for practical equivalence.
 ```{r}
-library(bayestestR)
-equivalence_test(fit1)
-equivalence_test(fit2)
+bayestestR::equivalence_test(fit1)
+bayestestR::equivalence_test(fit2)
 ```
 
 {lme4} package.
