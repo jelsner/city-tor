@@ -5,6 +5,8 @@ editor_options:
   chunk_output_type: console
 ---
 
+## Project one 
+
 What cities (core-based statistical areas--cbsa) have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and count the number of tornadoes within each core-based statistical area during each epoch.
 
 Load packages.
@@ -12,6 +14,7 @@ Load packages.
 library(sf)
 library(tidyverse)
 library(tidycensus)
+library(patchwork)
 ```
 
 Get USA boundary map from {tidycensus}.
@@ -42,7 +45,7 @@ CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa",
 #  filter(GEOID_ST %in% state_laea$GEOID)
 ```
 
-Same from the {tigris} package.
+Get the same set of polygons from the {tigris} package. Must be connected to the internet
 ```{r}
 CBSA2.sf <- tigris::core_based_statistical_areas()
 ```
@@ -94,7 +97,7 @@ ggplot() +
                          paste0(", 1985-2019 (green): ", nT[2])))
 ```
 
-All metro areas. Also see {stars.Rmd} for creating a space-time object.
+All core-based statistical areas. See {stars.Rmd} for creating a space-time object.
 ```{r}
 Intersects <- CBSA.sf |>
   st_intersects(Torn.sf) |>
@@ -126,8 +129,6 @@ TorCounts.sf |>
 ```
 
 ```{r}
-library(patchwork)
-
 Top25.sf <- TorCounts.sf |>
   slice_max(nT, n = 25)
 
@@ -193,7 +194,7 @@ girafe(ggobj = P_plot / US_map, width_svg = 8, height_svg = 6) |>
   girafe_options(opts_hover(css = "fill:cyan;stroke:cyan;"))
 ```
 
-Counts grouped early and late
+Counts grouped early and late.
 ```{r}
 Intersects <- CBSA.sf |>
   st_intersects(Torn.sf) |>
@@ -335,16 +336,25 @@ Both.sf <- CBSA.sf |>
 P_plot / US_map
 ```
 
-## EF ratings rural versus urban impacts
+## Project two
 
-Whether a tornado hits an urban area or not determines to some extent the amount damage that occurs. Here we attempt to quantify the magnitude of this extent. Specifically we ask how much less likely (on average) is EF3 (or worse) damage following a tornado impact in rural areas compared to urban areas?
+EF ratings rural versus urban impacts. Whether a tornado hits an urban area or not determines to some extent the amount damage that occurs. Here we attempt to quantify the magnitude of this effect. Specifically we ask how much less likely (on average) is EF3 (or worse) damage in rural areas compared with urban areas?
+
+Load packages.
+```{r}
+library(sf)
+library(tidyverse)
+library(tidycensus)
+library(patchwork)
+library(tmap)
+```
 
 ```{r}
 Plains <- c("TX", "OK", "KS", "NE", "SD", "ND")
 Area.sfc <- USAboundaries::us_states(states = Plains) |>
   st_union() 
 
-Urban.sf <- tigris::urban_areas()
+Urban.sf <- tigris::urban_areas() # must be connected to the internet
 
 Area.sfc <- Area.sfc |>
   st_transform(crs = st_crs(Urban.sf))
@@ -355,7 +365,6 @@ Urban.sf <- Urban.sf |>
 
 Map check
 ```{r}
-library(tmap)
 tmap_mode("view")
 
 tm_shape(Area.sfc) +
@@ -399,7 +408,25 @@ tm_shape(Urban.sf) +
   tm_lines(col = "blue")
 ```
 
-Group tornadoes by across the urban/rural divide and examine EF rating statistics.
+Areas
+```{r}
+areaRegion <- 
+  Area.sfc |> 
+  st_bbox() |>
+  st_as_sfc() |>
+  st_area()
+
+areaUrban <-
+  Urban.sf |>
+  st_area() |>
+  sum()
+
+areaUrban / areaRegion * 100
+```
+
+Urban areas cover 1.4% of the region.
+
+Group tornadoes by urban or rural and examine EF rating statistics.
 ```{r}
 ( UrbanRuralStats.df <- Torn.sf |>
   st_drop_geometry() |>
@@ -413,7 +440,12 @@ Group tornadoes by across the urban/rural divide and examine EF rating statistic
             MedianL = median(Length),
             AvgW = mean(Width),
             MedianW = median(Width)) )
+
+x <- UrbanRuralStats.df
+x$nT[x$Urban] / (x$nT[x$Urban] + x$nT[!x$Urban]) * 100
 ```
+
+Urban tornadoes (tornadoes affecting urban areas) account for 8.4% of all tornadoes.
 
 On average the EF rating is lower for tornadoes in rural areas. Before jumping to conclusions we need to examine other factors like the fact that rural areas are much larger in the west.
 
@@ -481,7 +513,7 @@ ggplot(FreqByEF.df,
     ylab("Cumulative Proportion") +
   theme_minimal()
 ```
-### Figure: Relative frequency of tornadoes by maximum EF rating grouped by urban and rural occurrence. Only tornadoes occurring from Texas to North Dakota are considered. Log-cumulative odds of a tornado by maximum EF rating grouped by urban and rural occurrence.
+### Figure: Relative frequency of tornadoes by maximum EF rating grouped by urban and rural occurrence. Only tornadoes occurring in a boundying box encompassing Texas to North Dakota are considered. Log-cumulative odds of a tornado by maximum EF rating grouped by urban and rural occurrence.
 
 Note that the cumulative logit for the highest EF rating is infinity. This is because log(1/(1 - 1)) = $\infty$. This is always the case so we do not need a parameter for it. We get it for free from the law of total probability. So for $K$ = 6 possible maximum EF ratings we only need $K$ - 1 = 5 intercepts.
 
@@ -513,32 +545,72 @@ $$
 
 where Year_i indicates the year of tornado i and L_i and W_i indicate the length and width of damage path for tornado i. Month (M_i) is a random offset so the coefficient \beta_M is a vector of length 12. 
 
+Use the {ordinal} and {lme4} packages. Christensen (2019). ordinal - Regression Models for Ordinal Data. R package version 2019.12-10. https://CRAN.R-project.org/package=ordinal
+
+https://user2021.r-project.org/participation/technical_notes/t186/technote/
+```{r}
+library(ordinal)
+library(lme4)
+```
+
+Prepare the data
+```{r}
+df <- Torn.sf |>
+  st_drop_geometry() |>
+  mutate(maxEFf = factor(Torn.sf$maxEF, ordered = TRUE), # response variable must be an ordered factor
+         PathAreaS = log10(Length * Width),
+         YearS = as.numeric(scale(Year)), #as.numeric() function avoids creating lists
+         LonS = as.numeric(scale(slon))) |>
+  select(maxEFf, Urban, PathAreaS, YearS, LonS)
+```
+
+Fit cumulative logistic model using the `clm()` function from the {ordinal} package.
+```{r}
+m0 <- ordinal::clm(maxEFf ~ 1, data = df)
+m1 <- ordinal::clm(maxEFf ~ Urban, data = df)
+m2 <- ordinal::clm(maxEFf ~ Urban + PathAreaS, data = df)
+anova(m1, m2)
+
+m3 <- ordinal::clm(maxEFf ~ Urban + PathAreaS + YearS, data = df)
+anova(m2, m3)
+
+m4 <- ordinal::clm(maxEFf ~ Urban * PathAreaS, data = df)
+anova(m2, m4)
+```
+
+Also try the `polr()` function from the {MASS} package.
+
+
+Interpreting the coefficients https://stats.idre.ucla.edu/other/mult-pkg/faq/ologit/
+```{r}
+summary(m1)
+```
+
 
 Use the {brms} package. Start by setting the family and the model formula. Get priors. 
 ```{r}
 library(brms)
-Torn.sf$maxEF1 <- Torn.sf$maxEF + 1 # can not use 0
 
 family <- brms::cumulative(threshold = "flexible")
-formula <- maxEF1 ~ 1
+formula <- maxEFf ~ 1
 
 get_prior(formula, 
-          data = Torn.sf, 
+          data = df, 
           family = family)
 
 prior <- brm(formula = formula,
-             data = Torn.sf,
+             data = df,
              family = family,
-             prior = set_prior("student_t(7, 0, 10)", class = "Intercept"),
+             prior = set_prior("student_t(3, 0, 2.5)", class = "Intercept"),
              sample_prior = "only",
              seed = 9121)
 prior_out <- predict(prior, probs = c(0, 1))
 head(prior_out)
 
 fit0 <- brm(formula = formula,
-           data = Torn.sf,
+           data = df,
            family = family,
-           prior = set_prior("student_t(7, 0, 10)", class = "Intercept"),
+           prior = set_prior("student_t(3, 0, 2.5)", class = "Intercept"),
            seed = 9121)
 fixef(fit0)
 
@@ -555,15 +627,8 @@ These are the same (nearly) as the values in `cum_pr_k` that we computed above. 
 
 Model with predictors. Start with some default priors (for example `"normal(0,5)"` for the `class = "b"`). Sample from the priors and check the predictive distribution of the response. Adjust the priors accordingly. https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
 ```{r}
-df <- Torn.sf |>
-  st_drop_geometry() |>
-  mutate(PathArea = Length * Width,
-         PathAreaS = log10(PathArea),
-         YearS = scale(Year),
-         LonS = scale(slon))
-
 family <- brms::cumulative(threshold = "flexible")
-formula <- maxEF1 ~ Urban
+formula <- maxEFf ~ Urban
 
 get_prior(formula, 
           data = df, 
@@ -646,12 +711,6 @@ Test for practical equivalence.
 bayestestR::equivalence_test(fit1)
 bayestestR::equivalence_test(fit2)
 ```
-
-{lme4} package.
-```{r}
-library(lme4)
-```
-
 
 Extracting and visualizing tidy draws from {brms} models. https://cran.r-project.org/web/packages/tidybayes/vignettes/tidy-brms.html
 ```{r}
