@@ -570,21 +570,77 @@ m0 <- ordinal::clm(maxEFf ~ 1, data = df)
 m1 <- ordinal::clm(maxEFf ~ Urban, data = df)
 m2 <- ordinal::clm(maxEFf ~ Urban + PathAreaS, data = df)
 anova(m1, m2)
-
-m3 <- ordinal::clm(maxEFf ~ Urban + PathAreaS + YearS, data = df)
-anova(m2, m3)
-
-m4 <- ordinal::clm(maxEFf ~ Urban * PathAreaS, data = df)
-anova(m2, m4)
 ```
 
 Also try the `polr()` function from the {MASS} package.
+```{r}
+library(MASS)
+m1 <- polr(maxEFf ~ Urban, data = df)
+brant::brant(m1)
+m2 <- polr(maxEFf ~ Urban + PathAreaS, data = df)
+brant::brant(m2)
+```
+
+Testing proportional odds assumption: https://medium.com/evangelinelee/brant-test-for-proportional-odds-in-r-b0b373a93aa2
+
+Failed the proportional odds assumption. Must use a multinomial logistic regression. https://stats.idre.ucla.edu/r/dae/multinomial-logistic-regression/
+
+```{r}
+library(nnet)
+
+m1 <- multinom(maxEFf ~ Urban, data = df)
+m2 <- multinom(maxEFf ~ Urban + PathAreaS, data = df)
+summary(m1)
+summary(m2)
+
+anova(m1, m2)
+
+( z <- summary(m2)$coefficients/summary(m2)$standard.errors )
+( p <- (1 - pnorm(abs(z), 0, 1)) * 2) 
+
+exp(coef(m1))
+exp(coef(m2))
+
+head(pp <- fitted(m2))
+```
+
 
 
 Interpreting the coefficients https://stats.idre.ucla.edu/other/mult-pkg/faq/ologit/
+The ordinal logistic regression is parameterized as
+$$
+logit(P(Y \leq j)) = \beta_{j0} - \eta_1 x_1
+$$
+where 
+$$\eta_1 = -\beta_1 $$
+Suppose we want to see whether the binary predictor urban/rural predicts an ordinal outcome of EF ratings. Due to the parallel lines assumption, even though we have 6 rating categories, the coefficient of urban/rural stays the same across the categories. The two equations for `Urban = TRUE` ($x_1 = 1$) and `Urban = FALSE` ($x_1 = 0$) are
+$$
+logit(P(EF \leq j |x_1 = 1)) = \beta_{j0} - \eta_1 \\
+logit(P(EF \leq j |x_1 = 0)) = \beta_{j0}
+$$
+Then
+$$
+logit(P(EF \leq j |x_1 = 1)) - logit(P(EF \leq j |x_1 = 0)) = -\eta_1
+$$
+
 ```{r}
 summary(m1)
 ```
+
+The output shows that for tornadoes impacting urban areas, the log odds of getting an EF0 rating (versus an EF1 or higher rating) is $-\hat \eta_1 = - .88$ or .88 points _lower_ than tornadoes impacting rural areas.
+
+Instead of interpreting the odds of getting an EFj-th category or less, we can interpret the odds of getting a greater than the EFj-th category by exponentiating $\eta$ itself. $\exp(\hat \eta) = \exp(.88) = 2.42$ which means that urban tornadoes have 2.42 times the odds of having a higher EF rating across all EF categories.
+
+```{r}
+newdat <- data.frame(Urban = c(TRUE, FALSE))
+( phat <- predict(object = m1, newdat, type = "p") )
+```
+
+```{r}
+newdat <- data.frame(Urban = c(TRUE, FALSE), PathAreaS = mean(df$PathAreaS))
+( phat <- predict(object = m2, newdat, type = "p") )
+```
+
 
 
 Use the {brms} package. Start by setting the family and the model formula. Get priors. 
