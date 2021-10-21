@@ -575,15 +575,77 @@ anova(m1, m2)
 Also try the `polr()` function from the {MASS} package.
 ```{r}
 library(MASS)
-m1 <- polr(maxEFf ~ Urban, data = df)
-brant::brant(m1)
-m2 <- polr(maxEFf ~ Urban + PathAreaS, data = df)
-brant::brant(m2)
+m1polr <- polr(maxEFf ~ Urban, 
+               data = df)
+brant::brant(m1polr)
+m2polr <- polr(maxEFf ~ Urban + PathAreaS, 
+               data = df)
+brant::brant(m2polr)
 ```
 
 Testing proportional odds assumption: https://medium.com/evangelinelee/brant-test-for-proportional-odds-in-r-b0b373a93aa2
 
-Failed the proportional odds assumption. Must use a multinomial logistic regression. https://stats.idre.ucla.edu/r/dae/multinomial-logistic-regression/
+Failed the proportional odds assumption. 
+
+We might want to group EF4 & EF5 together and retest.
+
+We can try the `vglm()` function from the {VGAM} package. http://users.stat.ufl.edu/~aa/ordinal/R_examples.pdf
+
+Compare `parallel = TRUE` against `parallel = FALSE`. 
+
+Need to reform the data into a table of counts.
+
+Urban  EF0  EF1 EF2 ...
+TRUE   #
+FALSE  #
+```{r}
+( dfw <- df |>
+  group_by(Urban, maxEFf) |>
+  summarize(nT = n() ) |>
+  pivot_wider(names_from = maxEFf,
+              values_from = nT) )
+names(dfw)[2:7] <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
+```
+
+Will need to make `PathAreaS` categorical (e.g., small, medium, large)
+```{r}
+df <- df |>
+  mutate(PathAreaSc = cut(PathAreaS, 
+                          breaks = c(-Inf,
+                                     quantile(PathAreaS, probs = c(1/3, 2/3)),
+                                     Inf),
+                          labels = c("small","medium","large")))
+```
+
+```{r}
+library(VGAM)
+
+m1vglm <- vglm(maxEFf ~ Urban, 
+               family = cumulative(parallel = TRUE), 
+               data = df)
+
+m1vglm_a <- vglm(cbind(EF0, EF1, EF2, EF3, EF4, EF5) ~ Urban,
+                 family = cumulative, 
+                 data = dfw)
+```
+
+```{r}
+dfw2 <- df |>
+  group_by(Urban, PathAreaSc, maxEFf) |>
+  summarize(nT = n() ) |>
+  pivot_wider(names_from = maxEFf,
+              values_from = nT) |>
+  replace(is.na(dfw2), 0)
+
+names(dfw2)[3:8] <- c("EF0", "EF1", "EF2", "EF3", "EF4", "EF5")
+
+m2vglm_a <- vglm(cbind(EF0, EF1, EF2, EF3, EF4, EF5) ~ Urban + PathAreaSc,
+                 family = cumulative, 
+                 data = dfw2)
+
+```
+
+Or we can try a multinomial logistic regression. https://stats.idre.ucla.edu/r/dae/multinomial-logistic-regression/
 
 ```{r}
 library(nnet)
@@ -602,18 +664,21 @@ exp(coef(m1))
 exp(coef(m2))
 
 head(pp <- fitted(m2))
+
+m3 <- multinom(maxEFf ~ Urban * PathAreaS, data = df)
+anova(m2, m3)
 ```
 
 
 
-Interpreting the coefficients https://stats.idre.ucla.edu/other/mult-pkg/faq/ologit/
+Interpreting the coefficients of an ordinal logistic regression. https://stats.idre.ucla.edu/other/mult-pkg/faq/ologit/
 The ordinal logistic regression is parameterized as
 $$
 logit(P(Y \leq j)) = \beta_{j0} - \eta_1 x_1
 $$
 where 
 $$\eta_1 = -\beta_1 $$
-Suppose we want to see whether the binary predictor urban/rural predicts an ordinal outcome of EF ratings. Due to the parallel lines assumption, even though we have 6 rating categories, the coefficient of urban/rural stays the same across the categories. The two equations for `Urban = TRUE` ($x_1 = 1$) and `Urban = FALSE` ($x_1 = 0$) are
+Suppose we want to see whether the binary predictor urban/rural predicts an ordinal outcome of EF ratings. Due to the parallel lines assumption (failed in our case), even though we have 6 rating categories, the coefficient of urban/rural stays the same across the categories. The two equations for `Urban = TRUE` ($x_1 = 1$) and `Urban = FALSE` ($x_1 = 0$) are
 $$
 logit(P(EF \leq j |x_1 = 1)) = \beta_{j0} - \eta_1 \\
 logit(P(EF \leq j |x_1 = 0)) = \beta_{j0}
@@ -648,7 +713,12 @@ Use the {brms} package. Start by setting the family and the model formula. Get p
 library(brms)
 
 family <- brms::cumulative(threshold = "flexible")
+family <- brms::multinomial()
+
+df$maxEFc <- as.character(df$maxEFf)
+
 formula <- maxEFf ~ 1
+formula <- maxEFc ~ 1
 
 get_prior(formula, 
           data = df, 
