@@ -338,7 +338,7 @@ P_plot / US_map
 
 ## Project two
 
-EF ratings rural versus urban impacts. Whether a tornado hits an urban area or not determines to some extent the amount damage that occurs. Here we attempt to quantify the magnitude of this effect. Specifically we ask how much less likely (on average) is EF3 (or worse) damage in rural areas compared with urban areas?
+EF ratings rural versus urban impacts. Whether a tornado hits an urban area or not determines the amount damage that can occur. Here we attempt to quantify the magnitude of this effect. Specifically we ask how much less likely (on average) is EF3 (or worse) damage in rural areas compared with urban areas?
 
 Load packages.
 ```{r}
@@ -447,7 +447,7 @@ x$nT[x$Urban] / (x$nT[x$Urban] + x$nT[!x$Urban]) * 100
 
 Urban tornadoes (tornadoes affecting urban areas) account for 8.4% of all tornadoes.
 
-On average the EF rating is lower for tornadoes in rural areas. Before jumping to conclusions we need to examine other factors like the fact that rural areas are much larger in the west.
+On average the EF rating is lower for tornadoes in rural areas. Before jumping to conclusions we need to examine other factors like the fact that rural areas occupy a larger percentage of the west compared to the east.
 
 Use a cumulative logistic model to quantify the effect rural areas have on the EF rating conditioning on path characteristics, location, and month.
 
@@ -513,7 +513,7 @@ ggplot(FreqByEF.df,
     ylab("Cumulative Proportion") +
   theme_minimal()
 ```
-### Figure: Relative frequency of tornadoes by maximum EF rating grouped by urban and rural occurrence. Only tornadoes occurring in a boundying box encompassing Texas to North Dakota are considered. Log-cumulative odds of a tornado by maximum EF rating grouped by urban and rural occurrence.
+Figure: Relative frequency of tornadoes by maximum EF rating grouped by urban and rural occurrence. Only tornadoes occurring in a boundying box encompassing Texas to North Dakota are considered. Log-cumulative odds of a tornado by maximum EF rating grouped by urban and rural occurrence.
 
 Note that the cumulative logit for the highest EF rating is infinity. This is because log(1/(1 - 1)) = $\infty$. This is always the case so we do not need a parameter for it. We get it for free from the law of total probability. So for $K$ = 6 possible maximum EF ratings we only need $K$ - 1 = 5 intercepts.
 
@@ -954,11 +954,6 @@ out <- rbind(out1, out2)
 
 Be careful here. Size influences urban/rural (mean path area 4.4 sq km for tornadoes hitting urban areas and 1.7 sq km for tornadoes in rural areas) and both size and urban/rural influence EF rating. This creates a chain in a DAG.
 
-
-
-
-
-
 Compute the distance between the tornado and the nearest urban polygon.
 ```{r}
 distFromUrban <- numeric()
@@ -978,5 +973,171 @@ options(tigris_use_cache = TRUE)
                            county = "Richmond", 
                            geometry = TRUE,
                            summary_var = "P001001") )
+```
+
+## Project three
+
+Historical significant (EF2+) tornadoes from Grazulis. Data were extracted from the Grazulis volumes by Tyler Fricker and his associates.
+
+County level comparisons of counts over the common period 1950-1989 (see project cty-counts). Which states show the highest/lowest correlation between the two datasets in terms of number of EF2+ tornadoes? Why? What does it mean for a state to have a large correlation?
+
+Load packages.
+```{r}
+library(sf)
+library(tidyverse)
+library(tmap)
+```
+
+Get the historical tornado data
+```{r}
+unzip(zipfile = "SignificantTornadoes.zip")
+
+OldTorn.sf <- st_read(dsn = "SignificantTornadoes", 
+                      layer = "SignificantTornadoes")
+
+table(OldTorn.sf$mag)
+range(OldTorn.sf$Year)
+
+df <- OldTorn.sf |>
+  st_drop_geometry() |>
+  group_by(Year) |>
+  summarize(nF2 = sum(mag == "F2"),
+            nF3p = sum(mag == "F3" | mag == "F4" | mag == "F5"),
+            ratio = nF3p / nF2)
+
+  ggplot(data = df,
+         mapping = aes(x = Year, y = nF3p)) +
+  geom_line()
+```
+
+Get the modern tornado data since 2007 (start of EF rating).
+```{r}
+Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+                   layer = "1950-2019-torn-aspath") |>
+  filter(yr >= 2007)
+
+table(Torn.sf$mag)
+
+df <- Torn.sf |>
+  st_drop_geometry() |>
+  group_by(yr) |>
+  summarize(nF2 = sum(mag == 2),
+            nF3p = sum(mag == 3 | mag == 4 | mag == 5),
+            ratio = nF3p / nF2) 
+  ggplot(data = df, 
+         mapping = aes(x = yr, y = ratio)) +
+  geom_line()
+```
+
+Get historical county boundaries. Cities are points only.
+```{r}
+library(USAboundaries)
+library(USAboundariesData)
+
+cities_1880 <- us_cities("1880-01-01")
+
+plot(st_geometry(cities_1880))
+title("U.S. cities on January 1, 1880")
+
+counties_KS_1880 <- us_counties("1880-01-01", states = "Kansas")
+plot(st_geometry(counties_KS_1880))
+title("County boundaries in Kansas in 1880")
+
+counties_KS_1980 <- us_counties("1980-01-01", states = "Kansas")
+plot(st_geometry(counties_KS_1980))
+```
+
+History of tornadoes in/near Mayfield, KY.
+```{r}
+Mayfield_KY <- us_cities("2010-01-01") |> 
+  filter(city == "Mayfield", state_abbr == "KY") |>
+  st_buffer(dist = 10000)
+
+library(tmap)
+
+tmap_mode("view")
+
+tm_shape(Mayfield_KY) +
+  tm_borders()
+
+m <- st_intersects(OldTorn.sf,
+                   Mayfield_KY,
+                   sparse = FALSE)
+
+Mayfield_KY_OldTorn.sf <- OldTorn.sf |> 
+  subset(m)
+
+m <- st_intersects(Torn.sf,
+                   Mayfield_KY,
+                   sparse = FALSE)
+
+Mayfield_KY_Torn.sf <- Torn.sf |> 
+  subset(m)
+```
+
+Create a {stars} object from the old tornado data using city buffers. 
+
+See `stars.Rmd` in project `space-time`.
+```{r}
+library(stars)
+library(USAboundaries)
+library(USAboundariesData)
+
+cities_1880 <- us_cities("1880-01-01") |>
+  filter(population > 10000)
+cities_selected <- us_cities("1880-01-01") |>
+  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
+  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
+  st_buffer(dist = 80000)
+
+tm_shape(cities_selected) + 
+  tm_polygons()
+```
+
+Get tornado counts intersecting the city buffers.
+```{r}
+counts.v <- NULL
+for(year in 1880:1989){
+  tracks <- OldTorn.sf %>%
+    filter(Year == year)
+  mtrx <- st_intersects(cities_selected, 
+                        tracks, 
+                        sparse = FALSE)
+  counts.v <- c(counts.v, rowSums(mtrx))
+}
+
+library(lubridate)
+years <- year(seq(as_date("1880-01-01"), 
+                  as_date("1989-01-01"), 
+                  by = "year"))
+
+d <- st_dimensions(location = cities_selected$city, 
+                   year = years)
+
+( counts.st <- st_as_stars(list(counts = matrix(counts.v, ncol = length(years))), dimensions = d) )
+
+counts.df <- as.data.frame(counts.st)
+
+
+ggplot(data = counts.df,
+       mapping = aes(x = year, y = counts)) +
+  geom_point() +
+  facet_wrap(~ location, scales = "free_y") +
+  geom_smooth() +
+  theme_minimal()
+
+
+
+cities_selected_U <- st_union(cities_selected)
+counts.v <- NULL
+for(year in 1880:1989){
+  tracks <- OldTorn.sf %>%
+    filter(Year == year)
+  mtrx <- st_intersects(cities_selected_U, 
+                        tracks, 
+                        sparse = FALSE)
+  counts.v <- c(counts.v, rowSums(mtrx))
+}
+
 ```
 
