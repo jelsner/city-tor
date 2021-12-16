@@ -993,7 +993,10 @@ Get the historical tornado data
 unzip(zipfile = "SignificantTornadoes.zip")
 
 OldTorn.sf <- st_read(dsn = "SignificantTornadoes", 
-                      layer = "SignificantTornadoes")
+                      layer = "SignificantTornadoes") |>
+  arrange(date, time) |>
+  select(-county) |>
+  filter(mag %in% c("F2", "F3", "F4", "F5")) # note some transcription errors
 
 table(OldTorn.sf$mag)
 range(OldTorn.sf$Year)
@@ -1010,23 +1013,23 @@ df <- OldTorn.sf |>
   geom_line()
 ```
 
-Get the modern tornado data since 2007 (start of EF rating).
+Get the modern tornado data
 ```{r}
 Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
                    layer = "1950-2019-torn-aspath") |>
-  filter(yr >= 2007)
+  filter(yr > 1989) |>
+  filter(mag >= 2 | fat > 0) |>
+  mutate(mag = paste0("F", mag)) |>
+  select(om, st, date, time, fat, inj, wid, len, mag, 
+         Year = yr, Month = mo, Day = dy,
+         slon, slat, elon, elat)
 
 table(Torn.sf$mag)
+```
 
-df <- Torn.sf |>
-  st_drop_geometry() |>
-  group_by(yr) |>
-  summarize(nF2 = sum(mag == 2),
-            nF3p = sum(mag == 3 | mag == 4 | mag == 5),
-            ratio = nF3p / nF2) 
-  ggplot(data = df, 
-         mapping = aes(x = yr, y = ratio)) +
-  geom_line()
+Combine the old and new tornado databases.
+```{r}
+AllTorn.sf <- rbind(OldTorn.sf, Torn.sf)
 ```
 
 Get historical county boundaries. Cities are points only.
@@ -1075,6 +1078,8 @@ Mayfield_KY_Torn.sf <- Torn.sf |>
   subset(m)
 ```
 
+
+
 Create a {stars} object from the old tornado data using city buffers. 
 
 See `stars.Rmd` in project `space-time`.
@@ -1085,10 +1090,17 @@ library(USAboundariesData)
 
 cities_1880 <- us_cities("1880-01-01") |>
   filter(population > 10000)
+
+tm_shape(cities_1880) + 
+  tm_bubbles()
+
 cities_selected <- us_cities("1880-01-01") |>
-  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
-  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
-  st_buffer(dist = 80000)
+  filter(state_abbr %in% c("NE", "MO", "MS")) |>
+  filter(city %in% c("Lincoln", "Kansas City", "St. Louis", "Vicksburg")) |>
+#  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
+#  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
+#  filter(city %in% c("Little Rock")) |>
+  st_buffer(dist = 10000)
 
 tm_shape(cities_selected) + 
   tm_polygons()
@@ -1097,8 +1109,8 @@ tm_shape(cities_selected) +
 Get tornado counts intersecting the city buffers.
 ```{r}
 counts.v <- NULL
-for(year in 1880:1989){
-  tracks <- OldTorn.sf %>%
+for(year in 1880:2019){
+  tracks <- AllTorn.sf %>%
     filter(Year == year)
   mtrx <- st_intersects(cities_selected, 
                         tracks, 
@@ -1108,7 +1120,7 @@ for(year in 1880:1989){
 
 library(lubridate)
 years <- year(seq(as_date("1880-01-01"), 
-                  as_date("1989-01-01"), 
+                  as_date("2019-01-01"), 
                   by = "year"))
 
 d <- st_dimensions(location = cities_selected$city, 
@@ -1125,13 +1137,14 @@ ggplot(data = counts.df,
   facet_wrap(~ location, scales = "free_y") +
   geom_smooth() +
   theme_minimal()
+```
 
-
-
+All together
+```{r}
 cities_selected_U <- st_union(cities_selected)
 counts.v <- NULL
-for(year in 1880:1989){
-  tracks <- OldTorn.sf %>%
+for(year in 1880:2019){
+  tracks <- AllTorn.sf %>%
     filter(Year == year)
   mtrx <- st_intersects(cities_selected_U, 
                         tracks, 
@@ -1139,5 +1152,34 @@ for(year in 1880:1989){
   counts.v <- c(counts.v, rowSums(mtrx))
 }
 
+counts.df <- data.frame(year = 1880:2019, counts = counts.v)
+
+ggplot(data = counts.df,
+       mapping = aes(x = year, y = counts)) +
+  geom_point() +
+  geom_smooth() +
+  theme_minimal()
+
+counts.df |>
+  filter(year <= 2019) |>
+  summarize(Avg = mean(counts),
+            Var = var(counts))
+
 ```
 
+Big days
+```{r}
+AllTorn.sf |>
+  st_drop_geometry() |>
+  group_by(date) |>
+  summarize(nT = n()) |>
+  filter(nT >= 10) |>
+  mutate(Date = as.Date(date),
+         Year = year(Date)) |>
+  group_by(Year) |>
+  summarize(nBigDays = n()) |>
+ggplot(aes(x = Year, y = nBigDays)) +
+  geom_point() +
+  geom_smooth() +
+  theme_minimal()
+```
