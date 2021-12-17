@@ -1095,15 +1095,17 @@ tm_shape(cities_1880) +
   tm_bubbles()
 
 cities_selected <- us_cities("1880-01-01") |>
-  filter(state_abbr %in% c("NE", "MO", "MS")) |>
-  filter(city %in% c("Lincoln", "Kansas City", "St. Louis", "Vicksburg")) |>
+  filter(state_abbr %in% c("NE", "MO", "MS", "AR", "OH", "TX", "TN", "CO", "IA", "AL", "GA")) |>
+  filter(city %in% c("Lincoln", "Kansas City", "St. Louis", "Vicksburg", 
+                     "Columbus", "Nashville", "Memphis", "Little Rock", "Dallas",
+                     "Denver", "Des Moines", "Dubuque", "Montgomery", "Atlanta")) |>
 #  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
 #  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
 #  filter(city %in% c("Little Rock")) |>
-  st_buffer(dist = 10000)
+  st_buffer(dist = 20000)
 
 tm_shape(cities_selected) + 
-  tm_polygons()
+  tm_borders(lwd = 2, col = "red")
 ```
 
 Get tornado counts intersecting the city buffers.
@@ -1163,9 +1165,19 @@ ggplot(data = counts.df,
 counts.df |>
   filter(year <= 2019) |>
   summarize(Avg = mean(counts),
-            Var = var(counts))
+            Var = var(counts),
+            Ratio = Var/Avg)
 
+ratio <- NULL
+for(i in 1:10000){
+  x = rpois(n = 140, lambda = .478)
+  ratio[i] <- var(x) / mean(x)
+}
+range(ratio)
+hist(ratio)
 ```
+
+As the area defining the city core increases, the smaller the chance the annual counts assume a Poisson distribution. This makes sense if the underlying processes is Poisson but with a rate parameter that depends on the probability the tornado hits a substantial target. For small areas that probability will be high and remain equally high throughout time. For large areas that probability will be low earlier and increase with time as the city expands to include more targets (expanding bulls-eye).
 
 Big days
 ```{r}
