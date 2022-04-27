@@ -27,11 +27,14 @@ library(patchwork)
 
 Get USA boundary map from {tidycensus}.
 ```{r}
-data(state_laea)
+us_states <- tigris::states(cb = TRUE, 
+                            resolution = "20m") |>
+  dplyr::filter(STUSPS %in% state.abb) 
 
-state_laea <- state_laea |>
-  st_transform(crs = 32615) 
-plot(state_laea)
+us_states <- us_states |>
+  sf::st_transform(crs = 32615) |>
+  tigris::shift_geometry()
+plot(us_states$geometry)
 ```
 
 The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urban areas of 10,000+ population and/or are socioeconomically tied to the urban center by commute proximity. Prior to the year 2000, these were collectively known as MSA- Metropolitan Statistical Areas and Micropolitan Statistical Areas. An exclusive feature of GreatData CBSA Data is that the population statistics are calculated annually. Therefore, the CBSA rank is based on a more recent population than typical census data classifications.
@@ -40,17 +43,14 @@ https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-me
 
 Get the CBSA polygons.
 ```{r}
-if(!"tl_2019_us_cbsa" %in% list.files()){
-unzip("tl_2019_us_cbsa.zip",
-      exdir = "tl_2019_us_cbsa")
-}
-
-CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
+CBSA.sf <- st_read(dsn = here::here("data", "tl_2019_us_cbsa"), 
                    layer = "tl_2019_us_cbsa") |>
-  st_transform(crs = st_crs(state_laea)) 
+  st_transform(crs = st_crs(us_states))
+```
 
-#  mutate(GEOID_ST = substr(GEOID, start = 1, stop = 2)) |>
-#  filter(GEOID_ST %in% state_laea$GEOID)
+Add a column with state abbreviations
+```{r}
+CBSA.sf$STUSPS <- stringr::str_sub(CBSA.sf$NAME, -2, -1)
 ```
 
 Get the same set of polygons from the {tigris} package. Must be connected to the internet
@@ -60,27 +60,30 @@ CBSA2.sf <- tigris::core_based_statistical_areas()
 
 Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
 ```{r}
-if(!"1950-2019-torn-aspath" %in% list.files()) {
-download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
-              destfile = "1950-2019-torn-aspath.zip")
-unzip("1950-2019-torn-aspath.zip")
+if(!"1950-2020-torn-aspath" %in% list.files(here::here("data"))) {
+download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2020-torn-aspath.zip",
+              destfile = here::here("data", "1950-2019-torn-aspath.zip"))
+unzip(here::here("data", "1950-2019-torn-aspath.zip"))
 }
 
-Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
+Torn.sf <- st_read(dsn = here::here("data", "1950-2019-torn-aspath"), 
                    layer = "1950-2019-torn-aspath") |>
-  st_transform(crs = st_crs(state_laea)) |>
-  mutate(Late = yr >= 1985) |>
+  st_transform(crs = st_crs(us_states)) |>
+  filter(yr >= 1951) |>
+  mutate(Late = yr >= 1986) |>
   filter(mag >= 2)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
 ```{r}
-NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
+#NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
+#NameC <- "Dallas-Fort Worth-Arlington, TX"
+NameC <- "Oklahoma City, OK"
 Area.sf <- CBSA.sf |>
   filter(NAME == NameC)
 
-State.sf <- state_laea |>
-  filter(GEOID == "13")
+State.sf <- us_states |>
+  filter(STUSPS == "OK")
 
 Intersects <- Area.sf |>
   st_intersects(Torn.sf) |>
@@ -101,8 +104,8 @@ ggplot() +
   scale_color_manual(values = c("#9E1FDE", "#5FDE1F"),
                      guide = "none") +
   labs(title = paste0("Approximate tracks of significant tornadoes\n", NameC),
-       subtitle = paste0("Total numbers: 1950-1984 (purple): ", nT[1], 
-                         paste0(", 1985-2019 (green): ", nT[2])))
+       subtitle = paste0("Totals: 1951-1985 (purple): ", nT[1], 
+                         paste0(", 1986-2020 (green): ", nT[2])))
 ```
 
 All core-based statistical areas. See {stars.Rmd} for creating a space-time object.
@@ -140,7 +143,7 @@ TorCounts.sf |>
 Top25.sf <- TorCounts.sf |>
   slice_max(nT, n = 25)
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90', color = 'white', size = .15) +
   geom_sf(data = Top25.sf, size = 0,
           mapping = aes(fill = nT)) + 
@@ -172,7 +175,7 @@ Create a link/hover with map. https://twitter.com/kyle_e_walker/status/139753070
 ```{r}
 library(ggiraph)
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90', color = 'white', size = .15) +
   geom_sf_interactive(data = Top25.sf, size = 0,
                       mapping = aes(fill = nT, color = nT, data_id = GEOID)) + 
@@ -243,7 +246,7 @@ All.sf <- CBSA.sf |>
   right_join(Diff.df,
              by = "GEOID") 
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = All.sf, size = 0,
           mapping = aes(fill = Change)) + 
@@ -314,7 +317,7 @@ Both.sf <- CBSA.sf |>
   right_join(Both,
             by = "GEOID") 
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = Both.sf, size = 0,
           mapping = aes(fill = Difference > 0)) + 
