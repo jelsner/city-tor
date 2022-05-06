@@ -10,7 +10,13 @@ editor_options:
 30th Severe Local Storms Conference
 https://www.ametsoc.org/index.cfm/ams/meetings-events/ams-meetings/30th-conference-on-severe-local-storms1/?_zs=7VSBd1&_zl=N6GK8
 
-The shifting U.S. tornado threat
+Shifts in tornado frequency affecting metro and micro cities
+An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
+
+Chance that a tornado creates EF2 or worse damage given that it creates at least EF1 damage. The assumption is that, all else being equal, that chance will be higher with more targets in an area. Given the model of the expanding bull's eyes we would expect the ratio of EF2+/EF1+ tornadoes to be higher now then in the past. To the extent that that ratio is higher now for a given CBSA we label it has having experienced an expanding bull's eye.
+
+Expanding bull's eye is a simple conceptual model to illustrate how spatiotemporal development changes found
+in metropolitan regions have led to and will continue to place ever increasing number of built ‘‘targets’’ in harm's way.
 
 What cities (core-based statistical areas--cbsa) have seen the largest change in tornado frequency before/after 1985? Here I divide the tornado record into two 35-year epochs: 1986-2020 and 1951-1985 and count the number of tornadoes within each core-based statistical area during each epoch.
 
@@ -62,34 +68,51 @@ Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
 ```{r}
 if(!"1950-2020-torn-aspath" %in% list.files(here::here("data"))) {
 download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2020-torn-aspath.zip",
-              destfile = here::here("data", "1950-2019-torn-aspath.zip"))
-unzip(here::here("data", "1950-2019-torn-aspath.zip"))
+              destfile = here::here("data", "1950-2020-torn-aspath.zip"))
+unzip(here::here("data", "1950-2020-torn-aspath.zip"), 
+      exdir = here::here("data"))
 }
 
-Torn.sf <- st_read(dsn = here::here("data", "1950-2019-torn-aspath"), 
-                   layer = "1950-2019-torn-aspath") |>
+Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"), 
+                   layer = "1950-2020-torn-aspath") |>
   st_transform(crs = st_crs(us_states)) |>
-  filter(yr >= 1951) |>
-  mutate(Late = yr >= 1986) |>
-  filter(mag >= 2)
+#  filter(yr >= 1951) |>
+  filter(yr >= 1995) |>
+#  filter(yr >= 2007) |>
+#  mutate(Late = yr >= 1986) |>
+  mutate(Late = yr >= 2007) |>
+#  mutate(Late = yr >= 2013) |>
+  filter(mag >= 1)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
 ```{r}
 #NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
-#NameC <- "Dallas-Fort Worth-Arlington, TX"
-NameC <- "Oklahoma City, OK"
+NameC <- "Dallas-Fort Worth-Arlington, TX"
+#NameC <- "Oklahoma City, OK"
+#NameC <- "Wichita, KS"
+#NameC <- "Springfield, IL"
+#NameC <- "Des Moines-West Des Moines, IA"
+#NameC <- "Chicago-Naperville-Elgin, IL-IN-WI"
+#NameC <- "Rockford, IL"
+#NameC <- "Jackson, MS"
+#NameC <- "Nashville-Davidson--Murfreesboro--Franklin, TN"
+#NameC <- "Birmingham-Hoover, AL"
+
+Torn2.sf <- Torn.sf |>
+  filter(mag >= 1)
+
 Area.sf <- CBSA.sf |>
   filter(NAME == NameC)
 
 State.sf <- us_states |>
-  filter(STUSPS == "OK")
+  filter(STUSPS == "TX")
 
 Intersects <- Area.sf |>
-  st_intersects(Torn.sf) |>
+  st_intersects(Torn2.sf) |>
   unlist()
 
-AreaTors.sf <- Torn.sf[Intersects, ]
+AreaTors.sf <- Torn2.sf[Intersects, ]
 
 nT <- AreaTors.sf |>
   group_by(Late) |>
@@ -108,7 +131,20 @@ ggplot() +
                          paste0(", 1986-2020 (green): ", nT[2])))
 ```
 
-All core-based statistical areas. See {stars.Rmd} for creating a space-time object.
+Time series of ratio EF2+/EF1+ in 10-year moving averages.
+```{r}
+AreaTors.sf |>
+  st_drop_geometry() |>
+  group_by(yr) |>
+  summarize(nT = sum(mag >= 1),
+            nT2 = sum(mag >= 2),
+            ratio = nT2/nT) |>
+  ggplot(mapping = aes(x = yr, y = ratio)) +
+  geom_line() +
+  geom_smooth()
+```
+
+All core-based statistical areas. Metro areas and micro areas. See {stars.Rmd} for creating a space-time object.
 ```{r}
 Intersects <- CBSA.sf |>
   st_intersects(Torn.sf) |>
@@ -121,10 +157,114 @@ Intersects.m <- CBSA.sf |>
 TorCounts.sf <- 
   data.frame(GEOID = CBSA.sf$GEOID, 
              NAME = CBSA.sf$NAME,
+             LSAD = CBSA.sf$LSAD,
              nT = rowSums(Intersects.m),
              geometry = CBSA.sf$geometry) |>
   st_as_sf()
 ```
+
+Repeat for nT2 (EF2+) and then early and late.
+```{r}
+Torn2.sf <- Torn.sf |>
+  filter(mag >= 2) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+TorCounts.sf$nT2 <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(!Late) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+TorCounts.sf$nTearly <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(Late) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+TorCounts.sf$nTlate <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(!Late, mag >= 2) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+TorCounts.sf$nT2early <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(Late, mag >= 2) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+TorCounts.sf$nT2late <- rowSums(Intersects.m)
+```
+
+Only examine areas with at least 15 tornadoes over the period 14-year period 2007-2020. 30 tornadoes over the period 1951-2020.
+```{r}
+TorCounts2.sf <- TorCounts.sf |>
+  filter(nT >= 20) |>
+  mutate(RatioEarly = nT2early/nTearly,
+         RatioLate = nT2late/nTlate,
+         EBE = RatioLate - RatioEarly,
+         EBEtrue = EBE > 0)
+
+TorCounts2.sf |>
+  arrange(desc(EBE))
+
+table(TorCounts2.sf$LSAD, TorCounts2.sf$EBEtrue)
+```
+
+Map all CBSAs with at least 15 tornadoes filled by EBE.
+```{r}
+X.sf <- TorCounts2.sf |>
+#  filter(LSAD == "M1")
+  filter(nTlate < nTearly)
+
+( US_map <- ggplot(data = us_states) +
+  geom_sf(fill = 'gray90',color = 'white', size = .15) +
+  geom_sf(data = TorCounts2.sf, size = 0,
+          mapping = aes(fill = EBEtrue)) + 
+  scale_fill_manual(values = c("#1984E1", "#E11984")) +
+  labs(title = "Expanding bull's eyes",
+       caption = "Gray regions are outside of core-based statistical areas or have had fewer than 15 tornadoes.") +
+  theme_void() +
+  theme(legend.title=element_blank()) )
+```
+
+Areas in blue have had a larger percentage of strong tornadoes relative to all tornadoes since 2014.
+
 
 ```{r}
 TorCounts.sf |>
