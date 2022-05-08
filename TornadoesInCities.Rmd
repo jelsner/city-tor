@@ -10,13 +10,19 @@ editor_options:
 30th Severe Local Storms Conference
 https://www.ametsoc.org/index.cfm/ams/meetings-events/ams-meetings/30th-conference-on-severe-local-storms1/?_zs=7VSBd1&_zl=N6GK8
 
+Geographic variation in the expanding bull's eye effect: Why aren't we seeing more damaging tornadoes in urban areas?
+
 Shifts in tornado frequency affecting metro and micro cities
 An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
 
-Chance that a tornado creates EF2 or worse damage given that it creates at least EF1 damage. The assumption is that, all else being equal, that chance will be higher with more targets in an area. Given the model of the expanding bull's eyes we would expect the ratio of EF2+/EF1+ tornadoes to be higher now then in the past. To the extent that that ratio is higher now for a given CBSA we label it has having experienced an expanding bull's eye.
 
-Expanding bull's eye is a simple conceptual model to illustrate how spatiotemporal development changes found
-in metropolitan regions have led to and will continue to place ever increasing number of built ‘‘targets’’ in harm's way.
+EF2/EF1 or EF3/EF1
+
+Chance that a tornado creates EF2 or worse damage given that it creates at least EF1 damage. The assumption is, that all else being equal, the chance will be higher with more targets in an area for tornadoes to damage. Given the model of the expanding bull's eyes we would expect the ratio of EF2+/EF1+ tornadoes to be higher now then in the past. To the extent that that ratio is higher now for a given CBSA we consider it has having experienced an expanding bull's eye.
+
+I think we need the denominator to be EF0 tornadoes (all tornadoes) otherwise the ratio of EF1 to EF0 might be going up faster than the ratio of EF2 to EF1 making it seem like there is no expanding bull's eye.
+
+Expanding bull's eye is a simple conceptual model to illustrate how spatio-temporal development changes found in metropolitan regions have led to and will continue to place ever increasing number of built ‘targets’ in harm's way.
 
 What cities (core-based statistical areas--cbsa) have seen the largest change in tornado frequency before/after 1985? Here I divide the tornado record into two 35-year epochs: 1986-2020 and 1951-1985 and count the number of tornadoes within each core-based statistical area during each epoch.
 
@@ -77,18 +83,18 @@ Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"),
                    layer = "1950-2020-torn-aspath") |>
   st_transform(crs = st_crs(us_states)) |>
 #  filter(yr >= 1951) |>
-  filter(yr >= 1995) |>
-#  filter(yr >= 2007) |>
+#  filter(yr >= 1995) |>
+  filter(yr >= 2007) |>
 #  mutate(Late = yr >= 1986) |>
-  mutate(Late = yr >= 2007) |>
-#  mutate(Late = yr >= 2013) |>
-  filter(mag >= 1)
+#  mutate(Late = yr >= 2007) |>
+  mutate(Late = yr >= 2013) |>
+  filter(mag >= 0)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
 ```{r}
 #NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
-NameC <- "Dallas-Fort Worth-Arlington, TX"
+#NameC <- "Dallas-Fort Worth-Arlington, TX"
 #NameC <- "Oklahoma City, OK"
 #NameC <- "Wichita, KS"
 #NameC <- "Springfield, IL"
@@ -98,15 +104,16 @@ NameC <- "Dallas-Fort Worth-Arlington, TX"
 #NameC <- "Jackson, MS"
 #NameC <- "Nashville-Davidson--Murfreesboro--Franklin, TN"
 #NameC <- "Birmingham-Hoover, AL"
+NameC <- "New Orleans-Metairie, LA"
 
 Torn2.sf <- Torn.sf |>
-  filter(mag >= 1)
+  filter(mag >= 0)
 
 Area.sf <- CBSA.sf |>
   filter(NAME == NameC)
 
 State.sf <- us_states |>
-  filter(STUSPS == "TX")
+  filter(STUSPS == "LA")
 
 Intersects <- Area.sf |>
   st_intersects(Torn2.sf) |>
@@ -127,18 +134,18 @@ ggplot() +
   scale_color_manual(values = c("#9E1FDE", "#5FDE1F"),
                      guide = "none") +
   labs(title = paste0("Approximate tracks of significant tornadoes\n", NameC),
-       subtitle = paste0("Totals: 1951-1985 (purple): ", nT[1], 
-                         paste0(", 1986-2020 (green): ", nT[2])))
+       subtitle = paste0("Totals: 2007-2013 (purple): ", nT[1], 
+                         paste0(", 2014-2020 (green): ", nT[2])))
 ```
 
-Time series of ratio EF2+/EF1+ in 10-year moving averages.
+Time series of ratio nEFk/nT.
 ```{r}
 AreaTors.sf |>
   st_drop_geometry() |>
   group_by(yr) |>
-  summarize(nT = sum(mag >= 1),
-            nT2 = sum(mag >= 2),
-            ratio = nT2/nT) |>
+  summarize(nT = sum(mag >= 0),
+            nTk = sum(mag >= 1),
+            ratio = nTk/nT) |>
   ggplot(mapping = aes(x = yr, y = ratio)) +
   geom_line() +
   geom_smooth()
@@ -165,8 +172,9 @@ TorCounts.sf <-
 
 Repeat for nT2 (EF2+) and then early and late.
 ```{r}
+EF <- 3
 Torn2.sf <- Torn.sf |>
-  filter(mag >= 2) 
+  filter(mag >= EF) 
 
 Intersects <- CBSA.sf |>
   st_intersects(Torn2.sf) |>
@@ -205,7 +213,7 @@ Intersects.m <- CBSA.sf |>
 TorCounts.sf$nTlate <- rowSums(Intersects.m)
 
 Torn2.sf <- Torn.sf |>
-  filter(!Late, mag >= 2) 
+  filter(!Late, mag >= EF) 
 
 Intersects <- CBSA.sf |>
   st_intersects(Torn2.sf) |>
@@ -218,7 +226,7 @@ Intersects.m <- CBSA.sf |>
 TorCounts.sf$nT2early <- rowSums(Intersects.m)
 
 Torn2.sf <- Torn.sf |>
-  filter(Late, mag >= 2) 
+  filter(Late, mag >= EF) 
 
 Intersects <- CBSA.sf |>
   st_intersects(Torn2.sf) |>
@@ -249,21 +257,27 @@ table(TorCounts2.sf$LSAD, TorCounts2.sf$EBEtrue)
 Map all CBSAs with at least 15 tornadoes filled by EBE.
 ```{r}
 X.sf <- TorCounts2.sf |>
-#  filter(LSAD == "M1")
-  filter(nTlate < nTearly)
+  filter(LSAD == "M1")
+#  filter(nTlate < nTearly)
 
 ( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = TorCounts2.sf, size = 0,
           mapping = aes(fill = EBEtrue)) + 
-  scale_fill_manual(values = c("#1984E1", "#E11984")) +
-  labs(title = "Expanding bull's eyes",
-       caption = "Gray regions are outside of core-based statistical areas or have had fewer than 15 tornadoes.") +
+  scale_fill_manual(values = c("#1984E1", "#E11984"),
+                    guide = 'none') +
+  labs(title = "Relatively fewer very damaging tornadoes recently",
+       subtitle = "Blue shows metro/micropolitan areas with a lower percentage of\nEF3+ tornadoes relative to all tornadoes since 2014",
+       caption = "Gray regions are outside core-based metro/micropolitan statistical areas or\nhad fewer than 20 reported tornadoes during the period 2007-2020.\nData source: SPC") +
   theme_void() +
   theme(legend.title=element_blank()) )
 ```
 
-Areas in blue have had a larger percentage of strong tornadoes relative to all tornadoes since 2014.
+Red shows metro/micropolitan areas with a greater percentage of EF3+ damaging tornadoes relative to all tornadoes since 2014. 
+
+Contracting bull's eye.
+
+Areas in red have had a larger percentage of damaging tornadoes (EF3+) or worse relative to all tornadoes since 2014.
 
 
 ```{r}
