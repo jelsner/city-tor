@@ -14,12 +14,7 @@ Geographic variation in the expanding bull's eye: Are we seeing more damaging to
 
 An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
 
-
-EF2/EF1 or EF3/EF1
-
 Chance that a tornado creates at least EF2 level damage. The assumption is, that all else being equal, the chance will be higher with more targets to damage. The expanding bull's eye model predicts this chance to be higher now then in the past. 
-
-To the extent that that ratio is higher now for a given CBSA we consider it has having experienced an expanding bull's eye.
 
 I think we need the denominator to be EF0 tornadoes (all tornadoes) otherwise the ratio of EF1 to EF0 might be going up faster than the ratio of EF2 to EF1 making it seem like there is no expanding bull's eye.
 
@@ -54,24 +49,64 @@ The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urb
 
 https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-metropolitan-statistical-area-micropolitan-statist https://www2.census.gov/geo/tiger/TIGER2019/CBSA/tl_2019_us_cbsa.zip
 
-Get the CBSA polygons.
+Get API key from U.S. Census. Then
 ```{r}
-CBSA.sf <- st_read(dsn = here::here("data", "tl_2019_us_cbsa"), 
-                   layer = "tl_2019_us_cbsa") |>
-  st_transform(crs = st_crs(us_states))
+file.create("CensusAPI") # open then copy/paste your API key
 ```
 
-Add a column with state abbreviations
+To ensure the file is only readable by you, not by any other user on the system use the function `Sys.chmod()` then read the key and install it.
 ```{r}
-CBSA.sf$STUSPS <- stringr::str_sub(CBSA.sf$NAME, -2, -1)
+Sys.chmod("CensusAPI", mode = "0400")
+key <- readr::read_file("CensusAPI")
+tidycensus::census_api_key(key, install = TRUE)
+readRenviron("~/.Renviron")
 ```
 
-Get the same set of polygons from the {tigris} package. Must be connected to the internet
+Make sure the file is listed in the file `.gitignore` so it doesn't get included in your git public repository.
+
+Get the CBSA polygons and population for year 2020. Housing units (`B25001_001`) better than population (`B01003_001`). 
 ```{r}
-CBSA2.sf <- tigris::core_based_statistical_areas()
+v <- load_variables(2020, "acs5", cache = TRUE)
+View(v)
 ```
 
-Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
+```{r}
+options(tigris_use_cache = TRUE)
+
+CBSA2020.sf <- tidycensus::get_acs(geography = "cbsa",
+                                   variables = "B25001_001",
+                                   year = 2020,
+                                   geometry = TRUE) |>
+  sf::st_transform(crs = 32615) |>
+  dplyr::mutate(LSAD = stringr::str_sub(NAME, start = -10),
+                NAME = stringr::str_sub(NAME, end = -12),
+                STUSPS = stringr::str_sub(NAME, start = -2, end = -1),
+                Area2020 = sf::st_area(geometry),
+                HU2020 = estimate,
+                HUD2020 = HU2020 / Area2020)
+                
+
+CBSA2011.sf <- tidycensus::get_acs(geography = "cbsa",
+                                   variables = "B25001_001",
+                                   year = 2011,
+                                   geometry = TRUE) |>
+  sf::st_transform(crs = 32615) |>
+  dplyr::mutate(LSAD = stringr::str_sub(NAME, start = -10),
+                NAME = stringr::str_sub(NAME, end = -12),
+                STUSPS = stringr::str_sub(NAME, start = -2, end = -1),
+                Area2011 = sf::st_area(geometry),
+                HU2011 = estimate,
+                HUD2011 = HU2011 / Area2011)
+
+df <- CBSA2011.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::select(GEOID, Area2011, HU2011, HUD2011)
+
+CBSA.sf <- CBSA2020.sf |>
+  dplyr::inner_join(df, by = "GEOID")
+```
+
+Get the tornado tracks.
 ```{r}
 if(!"1950-2020-torn-aspath" %in% list.files(here::here("data"))) {
 download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2020-torn-aspath.zip",
@@ -82,7 +117,7 @@ unzip(here::here("data", "1950-2020-torn-aspath.zip"),
 
 Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"), 
                    layer = "1950-2020-torn-aspath") |>
-  st_transform(crs = st_crs(us_states)) |>
+  st_transform(crs = st_crs(CBSA.sf)) |>
 #  filter(yr >= 1951) |>
 #  filter(yr >= 1995) |>
   filter(yr >= 2007) |>
@@ -94,6 +129,10 @@ Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"),
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
 ```{r}
+#NameC <- "St. Louis, MO-IL"
+#NameC <- "Fort Payne, AL"
+#NameC <- "Meridian, MS"
+NameC <- "Dodge City, KS"
 #NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
 #NameC <- "Dallas-Fort Worth-Arlington, TX"
 #NameC <- "Oklahoma City, OK"
@@ -105,7 +144,7 @@ Create a map showing one CBSA and the intersecting tornado tracks. Colors from h
 #NameC <- "Jackson, MS"
 #NameC <- "Nashville-Davidson--Murfreesboro--Franklin, TN"
 #NameC <- "Birmingham-Hoover, AL"
-NameC <- "New Orleans-Metairie, LA"
+#NameC <- "New Orleans-Metairie, LA"
 
 Torn2.sf <- Torn.sf |>
   filter(mag >= 0)
@@ -114,7 +153,7 @@ Area.sf <- CBSA.sf |>
   filter(NAME == NameC)
 
 State.sf <- us_states |>
-  filter(STUSPS == "LA")
+  filter(STUSPS == "KS")
 
 Intersects <- Area.sf |>
   st_intersects(Torn2.sf) |>
@@ -152,69 +191,57 @@ AreaTors.sf |>
   geom_smooth()
 ```
 
-Check on the ratio EF2+/All over the period 2007-2020 and its correlation with population or population density.
-Data source: https://www.census.gov/data/tables/time-series/demo/popest/2020s-total-metro-and-micro-statistical-areas.html#par_textimage
+Check on the ratio EF2+/All over the period 2007-2020 and its correlation with housing units.
 
-Get API key from U.S. Census. Then
-```{r}
-file.create("CensusAPI") # open then copy/paste your API key
-```
-
-To ensure the file is only readable by you, not by any other user on the system use the function `Sys.chmod()` then read the key and install it.
-```{r}
-Sys.chmod("CensusAPI", mode = "0400")
-key <- readr::read_file("CensusAPI")
-tidycensus::census_api_key(key, install = TRUE)
-readRenviron("~/.Renviron")
-```
-
-Make sure the file is listed in the file `.gitignore` so it doesn't get included in your git public repository.
-
-
-```{r}
-cbsa_population <- tidycensus::get_acs(
-  geography = "cbsa",
-  variables = "B01003_001",
-  year = 2020
-)
-```
-Table 2.6: Population by CBSA
-
-
-All core-based statistical areas. Metro areas and micro areas. See {stars.Rmd} for creating a space-time object.
+See {stars.Rmd} for creating a space-time object.
 ```{r}
 Intersects <- CBSA.sf |>
-  st_intersects(Torn.sf) |>
+  sf::st_intersects(Torn.sf) |>
   unlist()
 AreaTors.sf <- Torn.sf[Intersects, ]
 
 Intersects.m <- CBSA.sf |>
-  st_intersects(Torn.sf, sparse = FALSE)
+  sf::st_intersects(Torn.sf, sparse = FALSE)
 
-TorCounts.sf <- 
-  data.frame(GEOID = CBSA.sf$GEOID, 
-             NAME = CBSA.sf$NAME,
-             LSAD = CBSA.sf$LSAD,
-             nT = rowSums(Intersects.m),
-             geometry = CBSA.sf$geometry) |>
-  st_as_sf()
-```
+CBSA.sf$nT = rowSums(Intersects.m)
 
-Repeat for nT2 (EF2+) and then early and late.
-```{r}
-EF <- 3
 Torn2.sf <- Torn.sf |>
-  filter(mag >= EF) 
-
+  dplyr::filter(mag >= 2)
 Intersects <- CBSA.sf |>
-  st_intersects(Torn2.sf) |>
+  sf::st_intersects(Torn2.sf) |>
   unlist()
 AreaTors.sf <- Torn2.sf[Intersects, ]
 
 Intersects.m <- CBSA.sf |>
-  st_intersects(Torn2.sf, sparse = FALSE)
+  sf::st_intersects(Torn2.sf, sparse = FALSE)
 
-TorCounts.sf$nT2 <- rowSums(Intersects.m)
+CBSA.sf <- CBSA.sf |>
+  mutate(nT2 = rowSums(Intersects.m),
+         ratio = nT2/nT,
+         HUChange = HU2020 - HU2011,
+         HUChangeP = HUChange/HU2011,
+         HUDChange = HUD2020 - HUD2011,
+         HUDChangeP = HUDChange/HUD2011)
+```
+
+Graph the relationship between HU change and ratio
+```{r}
+CBSA2.sf <- CBSA.sf |>
+  dplyr::filter(nT >= 20) |>
+  dplyr::filter(HUChange > 0)
+
+ggplot(data = CBSA2.sf,
+       mapping = aes(x = HU2020, y = ratio)) +
+  geom_point() +
+  geom_text(mapping = aes(label = NAME)) +
+  scale_x_log10() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ LSAD, scales = "free_x") 
+```
+
+Repeat for early and late.
+```{r}
+EF <- 2
 
 Torn2.sf <- Torn.sf |>
   filter(!Late) 
@@ -227,7 +254,7 @@ AreaTors.sf <- Torn2.sf[Intersects, ]
 Intersects.m <- CBSA.sf |>
   st_intersects(Torn2.sf, sparse = FALSE)
 
-TorCounts.sf$nTearly <- rowSums(Intersects.m)
+CBSA.sf$nTearly <- rowSums(Intersects.m)
 
 Torn2.sf <- Torn.sf |>
   filter(Late) 
@@ -240,7 +267,7 @@ AreaTors.sf <- Torn2.sf[Intersects, ]
 Intersects.m <- CBSA.sf |>
   st_intersects(Torn2.sf, sparse = FALSE)
 
-TorCounts.sf$nTlate <- rowSums(Intersects.m)
+CBSA.sf$nTlate <- rowSums(Intersects.m)
 
 Torn2.sf <- Torn.sf |>
   filter(!Late, mag >= EF) 
@@ -253,7 +280,7 @@ AreaTors.sf <- Torn2.sf[Intersects, ]
 Intersects.m <- CBSA.sf |>
   st_intersects(Torn2.sf, sparse = FALSE)
 
-TorCounts.sf$nT2early <- rowSums(Intersects.m)
+CBSA.sf$nT2early <- rowSums(Intersects.m)
 
 Torn2.sf <- Torn.sf |>
   filter(Late, mag >= EF) 
@@ -266,33 +293,33 @@ AreaTors.sf <- Torn2.sf[Intersects, ]
 Intersects.m <- CBSA.sf |>
   st_intersects(Torn2.sf, sparse = FALSE)
 
-TorCounts.sf$nT2late <- rowSums(Intersects.m)
+CBSA.sf$nT2late <- rowSums(Intersects.m)
 ```
 
 Only examine areas with at least 15 tornadoes over the period 14-year period 2007-2020. 30 tornadoes over the period 1951-2020.
 ```{r}
-TorCounts2.sf <- TorCounts.sf |>
+CBSA2.sf <- CBSA.sf |>
   filter(nT >= 20) |>
   mutate(RatioEarly = nT2early/nTearly,
          RatioLate = nT2late/nTlate,
          EBE = RatioLate - RatioEarly,
          EBEtrue = EBE > 0)
 
-TorCounts2.sf |>
+CBSA2.sf |>
   arrange(desc(EBE))
 
-table(TorCounts2.sf$LSAD, TorCounts2.sf$EBEtrue)
+table(CBSA2.sf$LSAD, CBSA2.sf$EBEtrue)
 ```
 
 Map all CBSAs with at least 15 tornadoes filled by EBE.
 ```{r}
-X.sf <- TorCounts2.sf |>
-  filter(LSAD == "M1")
+X.sf <- CBSA2.sf |>
+  filter(LSAD == "Micro Area")
 #  filter(nTlate < nTearly)
 
-( US_map <- ggplot(data = us_states) +
-  geom_sf(fill = 'gray90',color = 'white', size = .15) +
-  geom_sf(data = TorCounts2.sf, size = 0,
+US_map <- ggplot(data = us_states) +
+  geom_sf(fill = 'gray90', color = 'white', size = .15) +
+  geom_sf(data = CBSA2.sf, size = 0,
           mapping = aes(fill = EBEtrue)) + 
   scale_fill_manual(values = c("#1984E1", "#E11984"),
                     guide = 'none') +
@@ -300,10 +327,20 @@ X.sf <- TorCounts2.sf |>
        subtitle = "Blue shows metro/micropolitan areas with a lower percentage of\nEF3+ tornadoes relative to all tornadoes since 2014",
        caption = "Gray regions are outside core-based metro/micropolitan statistical areas or\nhad fewer than 20 reported tornadoes during the period 2007-2020.\nData source: SPC") +
   theme_void() +
-  theme(legend.title=element_blank()) )
+  theme(legend.title=element_blank())
 ```
 
 Red shows metro/micropolitan areas with a greater percentage of EF3+ damaging tornadoes relative to all tornadoes since 2014. 
+
+```{r}
+library(tmap)
+
+tm_shape(us_states) +
+  tm_borders() +
+tm_shape(CBSA2.sf) +
+  tm_polygons("EBEtrue") +
+  tm_facets(by = "LSAD", ncol = 2)
+```
 
 Contracting bull's eye.
 
