@@ -10,15 +10,16 @@ editor_options:
 30th Severe Local Storms Conference
 https://www.ametsoc.org/index.cfm/ams/meetings-events/ams-meetings/30th-conference-on-severe-local-storms1/?_zs=7VSBd1&_zl=N6GK8
 
-Geographic variation in the expanding bull's eye effect: Why aren't we seeing more damaging tornadoes in urban areas?
+Geographic variation in the expanding bull's eye: Are we seeing more damaging tornadoes in urban areas?
 
-Shifts in tornado frequency affecting metro and micro cities
 An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
 
 
 EF2/EF1 or EF3/EF1
 
-Chance that a tornado creates EF2 or worse damage given that it creates at least EF1 damage. The assumption is, that all else being equal, the chance will be higher with more targets in an area for tornadoes to damage. Given the model of the expanding bull's eyes we would expect the ratio of EF2+/EF1+ tornadoes to be higher now then in the past. To the extent that that ratio is higher now for a given CBSA we consider it has having experienced an expanding bull's eye.
+Chance that a tornado creates at least EF2 level damage. The assumption is, that all else being equal, the chance will be higher with more targets to damage. The expanding bull's eye model predicts this chance to be higher now then in the past. 
+
+To the extent that that ratio is higher now for a given CBSA we consider it has having experienced an expanding bull's eye.
 
 I think we need the denominator to be EF0 tornadoes (all tornadoes) otherwise the ratio of EF1 to EF0 might be going up faster than the ratio of EF2 to EF1 making it seem like there is no expanding bull's eye.
 
@@ -150,6 +151,35 @@ AreaTors.sf |>
   geom_line() +
   geom_smooth()
 ```
+
+Check on the ratio EF2+/All over the period 2007-2020 and its correlation with population or population density.
+Data source: https://www.census.gov/data/tables/time-series/demo/popest/2020s-total-metro-and-micro-statistical-areas.html#par_textimage
+
+Get API key from U.S. Census. Then
+```{r}
+file.create("CensusAPI") # open then copy/paste your API key
+```
+
+To ensure the file is only readable by you, not by any other user on the system use the function `Sys.chmod()` then read the key and install it.
+```{r}
+Sys.chmod("CensusAPI", mode = "0400")
+key <- readr::read_file("CensusAPI")
+tidycensus::census_api_key(key, install = TRUE)
+readRenviron("~/.Renviron")
+```
+
+Make sure the file is listed in the file `.gitignore` so it doesn't get included in your git public repository.
+
+
+```{r}
+cbsa_population <- tidycensus::get_acs(
+  geography = "cbsa",
+  variables = "B01003_001",
+  year = 2020
+)
+```
+Table 2.6: Population by CBSA
+
 
 All core-based statistical areas. Metro areas and micro areas. See {stars.Rmd} for creating a space-time object.
 ```{r}
