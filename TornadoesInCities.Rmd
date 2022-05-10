@@ -12,6 +12,8 @@ https://www.ametsoc.org/index.cfm/ams/meetings-events/ams-meetings/30th-conferen
 
 Geographic variation in the expanding bull's eye: Are we seeing more damaging tornadoes in urban areas?
 
+Examining the expanding bull's eye model for tornado activity using changes in housing units
+
 An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
 
 Chance that a tornado creates at least EF2 level damage. The assumption is, that all else being equal, the chance will be higher with more targets to damage. The expanding bull's eye model predicts this chance to be higher now then in the past. 
@@ -58,7 +60,7 @@ To ensure the file is only readable by you, not by any other user on the system 
 ```{r}
 Sys.chmod("CensusAPI", mode = "0400")
 key <- readr::read_file("CensusAPI")
-tidycensus::census_api_key(key, install = TRUE)
+tidycensus::census_api_key(key, install = TRUE, overwrite = TRUE)
 readRenviron("~/.Renviron")
 ```
 
@@ -104,6 +106,36 @@ df <- CBSA2011.sf |>
 
 CBSA.sf <- CBSA2020.sf |>
   dplyr::inner_join(df, by = "GEOID")
+
+CBSA.sf <- CBSA.sf |>
+  dplyr::mutate(perChangeHU = (HU2020-HU2011)/HU2011 * 100)
+```
+
+```{r}
+CBSA.sf |> 
+  st_drop_geometry() |>
+  group_by(LSAD) |> 
+  summarize(TH2011 = sum(HU2011), 
+            TH2020 = sum(HU2020),
+            perChange = (TH2020 - TH2011) / TH2011 * 100)
+CBSA.sf |> 
+  st_drop_geometry() |>
+  filter(LSAD == "Micro Area") |>
+  group_by(NAME) |> 
+  summarize(TH2011 = sum(HU2011), 
+            TH2020 = sum(HU2020),
+            perChange = (TH2020 - TH2011) / TH2011 * 100) |>
+  arrange(desc(perChange))
+
+```
+
+The number of housing units in 2020 are up about 4% for the micro areas and about 8% for the metro areas since 2011.
+
+In the micro areas with changes in HU greater than 20% do we collectively see increases in the ratio of strong to weak tornadoes?
+```{r}
+CBSAx.sf <- CBSA.sf |>
+#  dplyr::filter(LSAD == "Micro Area") |>
+  dplyr::filter(perChangeHU > 0)
 ```
 
 Get the tornado tracks.
@@ -118,12 +150,12 @@ unzip(here::here("data", "1950-2020-torn-aspath.zip"),
 Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"), 
                    layer = "1950-2020-torn-aspath") |>
   st_transform(crs = st_crs(CBSA.sf)) |>
-#  filter(yr >= 1951) |>
+  filter(yr >= 1951) |>
 #  filter(yr >= 1995) |>
-  filter(yr >= 2007) |>
-#  mutate(Late = yr >= 1986) |>
+#  filter(yr >= 2007) |>
+  mutate(Late = yr >= 1986) |>
 #  mutate(Late = yr >= 2007) |>
-  mutate(Late = yr >= 2013) |>
+#  mutate(Late = yr >= 2013) |>
   filter(mag >= 0)
 ```
 
@@ -131,8 +163,10 @@ Create a map showing one CBSA and the intersecting tornado tracks. Colors from h
 ```{r}
 #NameC <- "St. Louis, MO-IL"
 #NameC <- "Fort Payne, AL"
-#NameC <- "Meridian, MS"
-NameC <- "Dodge City, KS"
+#NameC <- "Tupelo, MS"
+#NameC <- "Dodge City, KS"
+#NameC <- "Batesville, AR"
+#NameC <- "Fergus Falls, MN"
 #NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
 #NameC <- "Dallas-Fort Worth-Arlington, TX"
 #NameC <- "Oklahoma City, OK"
@@ -149,11 +183,14 @@ NameC <- "Dodge City, KS"
 Torn2.sf <- Torn.sf |>
   filter(mag >= 0)
 
-Area.sf <- CBSA.sf |>
-  filter(NAME == NameC)
+#Area.sf <- CBSA.sf |>
+#  filter(NAME == NameC)
+#  filter(LSAD == "Metro Area")
+
+Area.sf <- CBSAx.sf
 
 State.sf <- us_states |>
-  filter(STUSPS == "KS")
+  filter(STUSPS == "AR")
 
 Intersects <- Area.sf |>
   st_intersects(Torn2.sf) |>
@@ -183,15 +220,16 @@ Time series of ratio nEFk/nT.
 AreaTors.sf |>
   st_drop_geometry() |>
   group_by(yr) |>
-  summarize(nT = sum(mag >= 0),
-            nTk = sum(mag >= 1),
+  summarize(nT = sum(mag >= 1),
+            nTk = sum(mag >= 3),
             ratio = nTk/nT) |>
   ggplot(mapping = aes(x = yr, y = ratio)) +
   geom_line() +
+  scale_y_continuous(limits = c(0, 1)) +
   geom_smooth()
 ```
 
-Check on the ratio EF2+/All over the period 2007-2020 and its correlation with housing units.
+
 
 See {stars.Rmd} for creating a space-time object.
 ```{r}
