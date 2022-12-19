@@ -7,7 +7,25 @@ editor_options:
 
 ## Project one 
 
-What cities (core-based statistical areas--cbsa) have seen the biggest change in tornado frequency before/after 1985? Here I divide the tornado record into two epochs: 1985-2019 and 1950-1984 and count the number of tornadoes within each core-based statistical area during each epoch.
+30th Severe Local Storms Conference
+https://www.ametsoc.org/index.cfm/ams/meetings-events/ams-meetings/30th-conference-on-severe-local-storms1/?_zs=7VSBd1&_zl=N6GK8
+
+Geographic variation in the expanding bull's eye: Are we seeing more damaging tornadoes in urban areas?
+
+Examining the expanding bull's eye model for tornado activity using changes in housing units
+
+An empirical study of the expanding bull's eye model. https://chubasco.niu.edu/ebe.htm
+
+Chance that a tornado creates at least EF2 level damage. The assumption is, that all else being equal, the chance will be higher with more targets to damage. The expanding bull's eye model predicts this chance to be higher now then in the past. 
+
+I think we need the denominator to be EF0 tornadoes (all tornadoes) otherwise the ratio of EF1 to EF0 might be going up faster than the ratio of EF2 to EF1 making it seem like there is no expanding bull's eye.
+
+Expanding bull's eye is a simple conceptual model to illustrate how spatio-temporal development changes found in metropolitan regions have led to and will continue to place ever increasing number of built ‘targets’ in harm's way.
+
+What cities (core-based statistical areas--cbsa) have seen the largest change in tornado frequency before/after 1985? Here I divide the tornado record into two 35-year epochs: 1986-2020 and 1951-1985 and count the number of tornadoes within each core-based statistical area during each epoch.
+
+https://www.thetravel.com/usa-cities-tornado/
+https://en.wikipedia.org/wiki/List_of_tornadoes_striking_downtown_areas_of_large_cities
 
 Load packages.
 ```{r}
@@ -19,66 +37,166 @@ library(patchwork)
 
 Get USA boundary map from {tidycensus}.
 ```{r}
-data(state_laea)
+us_states <- tigris::states(cb = TRUE, 
+                            resolution = "20m") |>
+  dplyr::filter(STUSPS %in% state.abb) 
 
-state_laea <- state_laea |>
-  st_transform(crs = 32615) 
-plot(state_laea)
+us_states <- us_states |>
+  sf::st_transform(crs = 32615) |>
+  tigris::shift_geometry()
+plot(us_states$geometry)
 ```
 
 The Core-Based Statistical Areas (CBSA) are geographic locations neighboring urban areas of 10,000+ population and/or are socioeconomically tied to the urban center by commute proximity. Prior to the year 2000, these were collectively known as MSA- Metropolitan Statistical Areas and Micropolitan Statistical Areas. An exclusive feature of GreatData CBSA Data is that the population statistics are calculated annually. Therefore, the CBSA rank is based on a more recent population than typical census data classifications.
 
 https://catalog.data.gov/dataset/tiger-line-shapefile-2019-nation-u-s-current-metropolitan-statistical-area-micropolitan-statist https://www2.census.gov/geo/tiger/TIGER2019/CBSA/tl_2019_us_cbsa.zip
 
-Get the CBSA polygons.
+Get API key from U.S. Census. Then
 ```{r}
-if(!"tl_2019_us_cbsa" %in% list.files()){
-unzip("tl_2019_us_cbsa.zip",
-      exdir = "tl_2019_us_cbsa")
-}
-
-CBSA.sf <- read_sf(dsn = "tl_2019_us_cbsa", 
-                   layer = "tl_2019_us_cbsa") |>
-  st_transform(crs = st_crs(state_laea)) 
-
-#  mutate(GEOID_ST = substr(GEOID, start = 1, stop = 2)) |>
-#  filter(GEOID_ST %in% state_laea$GEOID)
+file.create("CensusAPI") # open then copy/paste your API key
 ```
 
-Get the same set of polygons from the {tigris} package. Must be connected to the internet
+To ensure the file is only readable by you, not by any other user on the system use the function `Sys.chmod()` then read the key and install it.
 ```{r}
-CBSA2.sf <- tigris::core_based_statistical_areas()
+Sys.chmod("CensusAPI", mode = "0400")
+key <- readr::read_file("CensusAPI")
+tidycensus::census_api_key(key, install = TRUE, overwrite = TRUE)
+readRenviron("~/.Renviron")
 ```
 
-Get the tornado tracks. Tracks that recorded at least EF2 damage somewhere.
+Make sure the file is listed in the file `.gitignore` so it doesn't get included in your git public repository.
+
+Get the CBSA polygons and population for year 2020. Housing units (`B25001_001`) better than population (`B01003_001`). 
 ```{r}
-if(!"1950-2019-torn-aspath" %in% list.files()) {
-download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2019-torn-aspath.zip",
-              destfile = "1950-2019-torn-aspath.zip")
-unzip("1950-2019-torn-aspath.zip")
+v <- load_variables(2020, "acs5", cache = TRUE)
+View(v)
+```
+
+```{r}
+options(tigris_use_cache = TRUE)
+
+CBSA2020.sf <- tidycensus::get_acs(geography = "cbsa",
+                                   variables = "B25001_001",
+                                   year = 2020,
+                                   geometry = TRUE) |>
+  sf::st_transform(crs = 32615) |>
+  dplyr::mutate(LSAD = stringr::str_sub(NAME, start = -10),
+                NAME = stringr::str_sub(NAME, end = -12),
+                STUSPS = stringr::str_sub(NAME, start = -2, end = -1),
+                Area2020 = sf::st_area(geometry),
+                HU2020 = estimate,
+                HUD2020 = HU2020 / Area2020)
+                
+
+CBSA2011.sf <- tidycensus::get_acs(geography = "cbsa",
+                                   variables = "B25001_001",
+                                   year = 2011,
+                                   geometry = TRUE) |>
+  sf::st_transform(crs = 32615) |>
+  dplyr::mutate(LSAD = stringr::str_sub(NAME, start = -10),
+                NAME = stringr::str_sub(NAME, end = -12),
+                STUSPS = stringr::str_sub(NAME, start = -2, end = -1),
+                Area2011 = sf::st_area(geometry),
+                HU2011 = estimate,
+                HUD2011 = HU2011 / Area2011)
+
+df <- CBSA2011.sf |>
+  sf::st_drop_geometry() |>
+  dplyr::select(GEOID, Area2011, HU2011, HUD2011)
+
+CBSA.sf <- CBSA2020.sf |>
+  dplyr::inner_join(df, by = "GEOID")
+
+CBSA.sf <- CBSA.sf |>
+  dplyr::mutate(perChangeHU = (HU2020-HU2011)/HU2011 * 100)
+```
+
+```{r}
+CBSA.sf |> 
+  st_drop_geometry() |>
+  group_by(LSAD) |> 
+  summarize(TH2011 = sum(HU2011), 
+            TH2020 = sum(HU2020),
+            perChange = (TH2020 - TH2011) / TH2011 * 100)
+CBSA.sf |> 
+  st_drop_geometry() |>
+  filter(LSAD == "Micro Area") |>
+  group_by(NAME) |> 
+  summarize(TH2011 = sum(HU2011), 
+            TH2020 = sum(HU2020),
+            perChange = (TH2020 - TH2011) / TH2011 * 100) |>
+  arrange(desc(perChange))
+
+```
+
+The number of housing units in 2020 are up about 4% for the micro areas and about 8% for the metro areas since 2011.
+
+In the micro areas with changes in HU greater than 20% do we collectively see increases in the ratio of strong to weak tornadoes?
+```{r}
+CBSAx.sf <- CBSA.sf |>
+#  dplyr::filter(LSAD == "Micro Area") |>
+  dplyr::filter(perChangeHU > 0)
+```
+
+Get the tornado tracks.
+```{r}
+if(!"1950-2020-torn-aspath" %in% list.files(here::here("data"))) {
+download.file(url = "http://www.spc.noaa.gov/gis/svrgis/zipped/1950-2020-torn-aspath.zip",
+              destfile = here::here("data", "1950-2020-torn-aspath.zip"))
+unzip(here::here("data", "1950-2020-torn-aspath.zip"), 
+      exdir = here::here("data"))
 }
 
-Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
-                   layer = "1950-2019-torn-aspath") |>
-  st_transform(crs = st_crs(state_laea)) |>
-  mutate(Late = yr >= 1985) |>
-  filter(mag >= 2)
+Torn.sf <- st_read(dsn = here::here("data", "1950-2020-torn-aspath"), 
+                   layer = "1950-2020-torn-aspath") |>
+  st_transform(crs = st_crs(CBSA.sf)) |>
+  filter(yr >= 1951) |>
+#  filter(yr >= 1995) |>
+#  filter(yr >= 2007) |>
+  mutate(Late = yr >= 1986) |>
+#  mutate(Late = yr >= 2007) |>
+#  mutate(Late = yr >= 2013) |>
+  filter(mag >= 0)
 ```
 
 Create a map showing one CBSA and the intersecting tornado tracks. Colors from https://image-color-picker.com/hex-code-picker
 ```{r}
-NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
-Area.sf <- CBSA.sf |>
-  filter(NAME == NameC)
+#NameC <- "St. Louis, MO-IL"
+#NameC <- "Fort Payne, AL"
+#NameC <- "Tupelo, MS"
+#NameC <- "Dodge City, KS"
+#NameC <- "Batesville, AR"
+#NameC <- "Fergus Falls, MN"
+#NameC <- "Atlanta-Sandy Springs-Alpharetta, GA"
+#NameC <- "Dallas-Fort Worth-Arlington, TX"
+#NameC <- "Oklahoma City, OK"
+#NameC <- "Wichita, KS"
+#NameC <- "Springfield, IL"
+#NameC <- "Des Moines-West Des Moines, IA"
+#NameC <- "Chicago-Naperville-Elgin, IL-IN-WI"
+#NameC <- "Rockford, IL"
+#NameC <- "Jackson, MS"
+#NameC <- "Nashville-Davidson--Murfreesboro--Franklin, TN"
+#NameC <- "Birmingham-Hoover, AL"
+#NameC <- "New Orleans-Metairie, LA"
 
-State.sf <- state_laea |>
-  filter(GEOID == "13")
+Torn2.sf <- Torn.sf |>
+  filter(mag >= 0)
+
+#Area.sf <- CBSA.sf |>
+#  filter(NAME == NameC)
+#  filter(LSAD == "Metro Area")
+
+Area.sf <- CBSAx.sf
+
+State.sf <- us_states |>
+  filter(STUSPS == "AR")
 
 Intersects <- Area.sf |>
-  st_intersects(Torn.sf) |>
+  st_intersects(Torn2.sf) |>
   unlist()
 
-AreaTors.sf <- Torn.sf[Intersects, ]
+AreaTors.sf <- Torn2.sf[Intersects, ]
 
 nT <- AreaTors.sf |>
   group_by(Late) |>
@@ -93,27 +211,179 @@ ggplot() +
   scale_color_manual(values = c("#9E1FDE", "#5FDE1F"),
                      guide = "none") +
   labs(title = paste0("Approximate tracks of significant tornadoes\n", NameC),
-       subtitle = paste0("Total numbers: 1950-1984 (purple): ", nT[1], 
-                         paste0(", 1985-2019 (green): ", nT[2])))
+       subtitle = paste0("Totals: 2007-2013 (purple): ", nT[1], 
+                         paste0(", 2014-2020 (green): ", nT[2])))
 ```
 
-All core-based statistical areas. See {stars.Rmd} for creating a space-time object.
+Time series of ratio nEFk/nT.
+```{r}
+AreaTors.sf |>
+  st_drop_geometry() |>
+  group_by(yr) |>
+  summarize(nT = sum(mag >= 1),
+            nTk = sum(mag >= 3),
+            ratio = nTk/nT) |>
+  ggplot(mapping = aes(x = yr, y = ratio)) +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 1)) +
+  geom_smooth()
+```
+
+
+
+See {stars.Rmd} for creating a space-time object.
 ```{r}
 Intersects <- CBSA.sf |>
-  st_intersects(Torn.sf) |>
+  sf::st_intersects(Torn.sf) |>
   unlist()
 AreaTors.sf <- Torn.sf[Intersects, ]
 
 Intersects.m <- CBSA.sf |>
-  st_intersects(Torn.sf, sparse = FALSE)
+  sf::st_intersects(Torn.sf, sparse = FALSE)
 
-TorCounts.sf <- 
-  data.frame(GEOID = CBSA.sf$GEOID, 
-             NAME = CBSA.sf$NAME,
-             nT = rowSums(Intersects.m),
-             geometry = CBSA.sf$geometry) |>
-  st_as_sf()
+CBSA.sf$nT = rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  dplyr::filter(mag >= 2)
+Intersects <- CBSA.sf |>
+  sf::st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  sf::st_intersects(Torn2.sf, sparse = FALSE)
+
+CBSA.sf <- CBSA.sf |>
+  mutate(nT2 = rowSums(Intersects.m),
+         ratio = nT2/nT,
+         HUChange = HU2020 - HU2011,
+         HUChangeP = HUChange/HU2011,
+         HUDChange = HUD2020 - HUD2011,
+         HUDChangeP = HUDChange/HUD2011)
 ```
+
+Graph the relationship between HU change and ratio
+```{r}
+CBSA2.sf <- CBSA.sf |>
+  dplyr::filter(nT >= 20) |>
+  dplyr::filter(HUChange > 0)
+
+ggplot(data = CBSA2.sf,
+       mapping = aes(x = HU2020, y = ratio)) +
+  geom_point() +
+  geom_text(mapping = aes(label = NAME)) +
+  scale_x_log10() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ LSAD, scales = "free_x") 
+```
+
+Repeat for early and late.
+```{r}
+EF <- 2
+
+Torn2.sf <- Torn.sf |>
+  filter(!Late) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+CBSA.sf$nTearly <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(Late) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+CBSA.sf$nTlate <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(!Late, mag >= EF) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+CBSA.sf$nT2early <- rowSums(Intersects.m)
+
+Torn2.sf <- Torn.sf |>
+  filter(Late, mag >= EF) 
+
+Intersects <- CBSA.sf |>
+  st_intersects(Torn2.sf) |>
+  unlist()
+AreaTors.sf <- Torn2.sf[Intersects, ]
+
+Intersects.m <- CBSA.sf |>
+  st_intersects(Torn2.sf, sparse = FALSE)
+
+CBSA.sf$nT2late <- rowSums(Intersects.m)
+```
+
+Only examine areas with at least 15 tornadoes over the period 14-year period 2007-2020. 30 tornadoes over the period 1951-2020.
+```{r}
+CBSA2.sf <- CBSA.sf |>
+  filter(nT >= 20) |>
+  mutate(RatioEarly = nT2early/nTearly,
+         RatioLate = nT2late/nTlate,
+         EBE = RatioLate - RatioEarly,
+         EBEtrue = EBE > 0)
+
+CBSA2.sf |>
+  arrange(desc(EBE))
+
+table(CBSA2.sf$LSAD, CBSA2.sf$EBEtrue)
+```
+
+Map all CBSAs with at least 15 tornadoes filled by EBE.
+```{r}
+X.sf <- CBSA2.sf |>
+  filter(LSAD == "Micro Area")
+#  filter(nTlate < nTearly)
+
+US_map <- ggplot(data = us_states) +
+  geom_sf(fill = 'gray90', color = 'white', size = .15) +
+  geom_sf(data = CBSA2.sf, size = 0,
+          mapping = aes(fill = EBEtrue)) + 
+  scale_fill_manual(values = c("#1984E1", "#E11984"),
+                    guide = 'none') +
+  labs(title = "Relatively fewer very damaging tornadoes recently",
+       subtitle = "Blue shows metro/micropolitan areas with a lower percentage of\nEF3+ tornadoes relative to all tornadoes since 2014",
+       caption = "Gray regions are outside core-based metro/micropolitan statistical areas or\nhad fewer than 20 reported tornadoes during the period 2007-2020.\nData source: SPC") +
+  theme_void() +
+  theme(legend.title=element_blank())
+```
+
+Red shows metro/micropolitan areas with a greater percentage of EF3+ damaging tornadoes relative to all tornadoes since 2014. 
+
+```{r}
+library(tmap)
+
+tm_shape(us_states) +
+  tm_borders() +
+tm_shape(CBSA2.sf) +
+  tm_polygons("EBEtrue") +
+  tm_facets(by = "LSAD", ncol = 2)
+```
+
+Contracting bull's eye.
+
+Areas in red have had a larger percentage of damaging tornadoes (EF3+) or worse relative to all tornadoes since 2014.
+
 
 ```{r}
 TorCounts.sf |>
@@ -132,7 +402,7 @@ TorCounts.sf |>
 Top25.sf <- TorCounts.sf |>
   slice_max(nT, n = 25)
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90', color = 'white', size = .15) +
   geom_sf(data = Top25.sf, size = 0,
           mapping = aes(fill = nT)) + 
@@ -164,7 +434,7 @@ Create a link/hover with map. https://twitter.com/kyle_e_walker/status/139753070
 ```{r}
 library(ggiraph)
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90', color = 'white', size = .15) +
   geom_sf_interactive(data = Top25.sf, size = 0,
                       mapping = aes(fill = nT, color = nT, data_id = GEOID)) + 
@@ -235,7 +505,7 @@ All.sf <- CBSA.sf |>
   right_join(Diff.df,
              by = "GEOID") 
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = All.sf, size = 0,
           mapping = aes(fill = Change)) + 
@@ -306,7 +576,7 @@ Both.sf <- CBSA.sf |>
   right_join(Both,
             by = "GEOID") 
 
-( US_map <- ggplot(data = state_laea) +
+( US_map <- ggplot(data = us_states) +
   geom_sf(fill = 'gray90',color = 'white', size = .15) +
   geom_sf(data = Both.sf, size = 0,
           mapping = aes(fill = Difference > 0)) + 
@@ -1017,7 +1287,7 @@ Get the modern tornado data
 ```{r}
 Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
                    layer = "1950-2019-torn-aspath") |>
-  filter(yr > 1989) |>
+  filter(yr > 1950) |>
   filter(mag >= 2 | fat > 0) |>
   mutate(mag = paste0("F", mag)) |>
   select(om, st, date, time, fat, inj, wid, len, mag, 
@@ -1030,7 +1300,136 @@ table(Torn.sf$mag)
 Combine the old and new tornado databases.
 ```{r}
 AllTorn.sf <- rbind(OldTorn.sf, Torn.sf)
+
+df <- AllTorn.sf |>
+  st_drop_geometry() |>
+#  filter(Year > 1989) |>
+  group_by(Year) |>
+  summarize(nF2 = sum(mag == "F2"),
+            nF3p = sum(mag == "F3" | mag == "F4" | mag == "F5"),
+            nF4p = sum(mag == "F4" | mag == "F5"),
+            nF2p = nF2 + nF3p,
+            ratio = nF3p / nF2)
+
+  ggplot(data = df,
+         mapping = aes(x = Year, y = nF3p)) +
+  geom_line()
+
+acf(df$nF3p) # peaks at 8 & 9 years
 ```
+
+```{r}
+library(EMD)
+
+out <- emd(df$nF3p, boundary = "periodic")
+
+```
+
+Compute tornado energy for tornadoes in `AllTorn.sf`. Compute the pacf() on the annual energy.
+
+
+Include only tornadoes near cities. Create a {stars} object from the tornado data using city buffers. 
+
+See `stars.Rmd` in project `space-time`.
+```{r}
+library(stars)
+library(USAboundaries)
+library(USAboundariesData)
+
+cities_1880 <- us_cities("1880-01-01") |>
+  filter(population > 1000)
+
+tm_shape(cities_1880) + 
+  tm_bubbles()
+
+cities_selected <- us_cities("1880-01-01") |>
+  filter(state_abbr %in% c("NE", "MO", "MS", "AR", "OH", "TX", "TN", "CO", "IA", "AL", "GA")) |>
+  filter(city %in% c("Lincoln", "Kansas City", "St. Louis", "Vicksburg", 
+                     "Columbus", "Nashville", "Memphis", "Little Rock", "Dallas",
+                     "Denver", "Des Moines", "Dubuque", "Montgomery", "Atlanta")) |>
+#  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
+#  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
+#  filter(city %in% c("Little Rock")) |>
+  st_buffer(dist = 50000)
+
+tm_shape(cities_selected) + 
+  tm_borders(lwd = 2, col = "red")
+```
+
+Get tornado counts intersecting the city buffers.
+```{r}
+counts.v <- NULL
+for(year in 1880:2019){
+  tracks <- AllTorn.sf %>%
+    filter(Year == year)
+  mtrx <- st_intersects(cities_selected, 
+                        tracks, 
+                        sparse = FALSE)
+  counts.v <- c(counts.v, rowSums(mtrx))
+}
+
+library(lubridate)
+years <- year(seq(as_date("1880-01-01"), 
+                  as_date("2019-01-01"), 
+                  by = "year"))
+
+d <- st_dimensions(location = cities_selected$city, 
+                   year = years)
+
+( counts.st <- st_as_stars(list(counts = matrix(counts.v, ncol = length(years))), dimensions = d) )
+
+counts.df <- as.data.frame(counts.st)
+
+
+ggplot(data = counts.df,
+       mapping = aes(x = year, y = counts)) +
+  geom_point() +
+  facet_wrap(~ location, scales = "free_y") +
+  geom_smooth() +
+  theme_minimal()
+
+countsAll.df <- counts.df |>
+  group_by(year) |>
+  summarize(nT = sum(counts))
+```
+
+All together
+```{r}
+cities_selected_U <- st_union(cities_selected)
+counts.v <- NULL
+for(year in 1880:2019){
+  tracks <- AllTorn.sf %>%
+    filter(Year == year)
+  mtrx <- st_intersects(cities_selected_U, 
+                        tracks, 
+                        sparse = FALSE)
+  counts.v <- c(counts.v, rowSums(mtrx))
+}
+
+counts.df <- data.frame(year = 1880:2019, counts = counts.v)
+
+ggplot(data = counts.df,
+       mapping = aes(x = year, y = counts)) +
+  geom_point() +
+  geom_smooth() +
+  theme_minimal()
+
+counts.df |>
+  filter(year <= 2019) |>
+  summarize(Avg = mean(counts),
+            Var = var(counts),
+            Ratio = Var/Avg)
+
+ratio <- NULL
+for(i in 1:10000){
+  x = rpois(n = 140, lambda = .478)
+  ratio[i] <- var(x) / mean(x)
+}
+range(ratio)
+hist(ratio)
+```
+
+As the circumference around the city increases, the less likely the annual counts assume a Poisson distribution. This makes sense. If the underlying processes is Poisson with a rate parameter that depends on the chance that the tornado hits a target. For small circumferences that chance will be high and remain equally high over time. For large circumferences that chance will be low early and increase over time as the city expands to include more targets (expanding bulls-eye).
 
 Get historical county boundaries. Cities are points only.
 ```{r}
@@ -1078,107 +1477,6 @@ Mayfield_KY_Torn.sf <- Torn.sf |>
   subset(m)
 ```
 
-
-
-Create a {stars} object from the old tornado data using city buffers. 
-
-See `stars.Rmd` in project `space-time`.
-```{r}
-library(stars)
-library(USAboundaries)
-library(USAboundariesData)
-
-cities_1880 <- us_cities("1880-01-01") |>
-  filter(population > 10000)
-
-tm_shape(cities_1880) + 
-  tm_bubbles()
-
-cities_selected <- us_cities("1880-01-01") |>
-  filter(state_abbr %in% c("NE", "MO", "MS", "AR", "OH", "TX", "TN", "CO", "IA", "AL", "GA")) |>
-  filter(city %in% c("Lincoln", "Kansas City", "St. Louis", "Vicksburg", 
-                     "Columbus", "Nashville", "Memphis", "Little Rock", "Dallas",
-                     "Denver", "Des Moines", "Dubuque", "Montgomery", "Atlanta")) |>
-#  filter(state_abbr %in% c("AR", "OH", "TX", "TN")) |>
-#  filter(city %in% c("Columbus", "Nashville", "Memphis", "Little Rock", "Dallas")) |>
-#  filter(city %in% c("Little Rock")) |>
-  st_buffer(dist = 20000)
-
-tm_shape(cities_selected) + 
-  tm_borders(lwd = 2, col = "red")
-```
-
-Get tornado counts intersecting the city buffers.
-```{r}
-counts.v <- NULL
-for(year in 1880:2019){
-  tracks <- AllTorn.sf %>%
-    filter(Year == year)
-  mtrx <- st_intersects(cities_selected, 
-                        tracks, 
-                        sparse = FALSE)
-  counts.v <- c(counts.v, rowSums(mtrx))
-}
-
-library(lubridate)
-years <- year(seq(as_date("1880-01-01"), 
-                  as_date("2019-01-01"), 
-                  by = "year"))
-
-d <- st_dimensions(location = cities_selected$city, 
-                   year = years)
-
-( counts.st <- st_as_stars(list(counts = matrix(counts.v, ncol = length(years))), dimensions = d) )
-
-counts.df <- as.data.frame(counts.st)
-
-
-ggplot(data = counts.df,
-       mapping = aes(x = year, y = counts)) +
-  geom_point() +
-  facet_wrap(~ location, scales = "free_y") +
-  geom_smooth() +
-  theme_minimal()
-```
-
-All together
-```{r}
-cities_selected_U <- st_union(cities_selected)
-counts.v <- NULL
-for(year in 1880:2019){
-  tracks <- AllTorn.sf %>%
-    filter(Year == year)
-  mtrx <- st_intersects(cities_selected_U, 
-                        tracks, 
-                        sparse = FALSE)
-  counts.v <- c(counts.v, rowSums(mtrx))
-}
-
-counts.df <- data.frame(year = 1880:2019, counts = counts.v)
-
-ggplot(data = counts.df,
-       mapping = aes(x = year, y = counts)) +
-  geom_point() +
-  geom_smooth() +
-  theme_minimal()
-
-counts.df |>
-  filter(year <= 2019) |>
-  summarize(Avg = mean(counts),
-            Var = var(counts),
-            Ratio = Var/Avg)
-
-ratio <- NULL
-for(i in 1:10000){
-  x = rpois(n = 140, lambda = .478)
-  ratio[i] <- var(x) / mean(x)
-}
-range(ratio)
-hist(ratio)
-```
-
-As the area defining the city core increases, the smaller the chance the annual counts assume a Poisson distribution. This makes sense if the underlying processes is Poisson but with a rate parameter that depends on the probability the tornado hits a substantial target. For small areas that probability will be high and remain equally high throughout time. For large areas that probability will be low earlier and increase with time as the city expands to include more targets (expanding bulls-eye).
-
 Big days
 ```{r}
 AllTorn.sf |>
@@ -1195,3 +1493,5 @@ ggplot(aes(x = Year, y = nBigDays)) +
   geom_smooth() +
   theme_minimal()
 ```
+
+
