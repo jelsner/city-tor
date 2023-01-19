@@ -1251,6 +1251,8 @@ Historical significant (EF2+) tornadoes from Grazulis. Data were extracted from 
 
 County level comparisons of counts over the common period 1950-1989 (see project cty-counts). Which states show the highest/lowest correlation between the two datasets in terms of number of EF2+ tornadoes? Why? What does it mean for a state to have a large correlation?
 
+Combine the two data sets and compute the frequency spectra
+
 Load packages.
 ```{r}
 library(sf)
@@ -1260,28 +1262,31 @@ library(tmap)
 
 Get the historical tornado data
 ```{r}
-unzip(zipfile = "SignificantTornadoes.zip")
+#unzip(zipfile = "SignificantTornadoes.zip")
 
-OldTorn.sf <- st_read(dsn = "SignificantTornadoes", 
-                      layer = "SignificantTornadoes") |>
-  arrange(date, time) |>
-  select(-county) |>
-  filter(mag %in% c("F2", "F3", "F4", "F5")) # note some transcription errors
+OldTorn.sf <- sf::st_read(dsn = "SignificantTornadoes", 
+                          layer = "SignificantTornadoes") |>
+  dplyr::arrange(date, time) |>
+  dplyr::select(-county) |>
+  dplyr::filter(mag %in% c("F2", "F3", "F4", "F5")) # note some transcription errors
 
 table(OldTorn.sf$mag)
 range(OldTorn.sf$Year)
 
 df <- OldTorn.sf |>
-  st_drop_geometry() |>
-  group_by(Year) |>
-  summarize(nF2 = sum(mag == "F2"),
-            nF3p = sum(mag == "F3" | mag == "F4" | mag == "F5"),
-            ratio = nF3p / nF2)
+  sf::st_drop_geometry() |>
+  dplyr::group_by(Year) |>
+  dplyr::summarize(nT = dplyr::n(),
+                   nF2 = sum(mag == "F2"),
+                   nF3p = sum(mag == "F3" | mag == "F4" | mag == "F5"),
+                   ratio = nF3p / nF2)
 
   ggplot(data = df,
-         mapping = aes(x = Year, y = nF3p)) +
+         mapping = aes(x = Year, y = nT)) +
   geom_line()
 ```
+
+
 
 Get the modern tornado data
 ```{r}
