@@ -1253,18 +1253,11 @@ County level comparisons of counts over the common period 1950-1989 (see project
 
 Combine the two data sets and compute the frequency spectra
 
-Load packages.
-```{r}
-library(sf)
-library(tidyverse)
-library(tmap)
-```
-
 Get the historical tornado data
 ```{r}
 #unzip(zipfile = "SignificantTornadoes.zip")
 
-OldTorn.sf <- sf::st_read(dsn = "SignificantTornadoes", 
+OldTorn.sf <- sf::st_read(dsn = here::here("data", "SignificantTornadoes"), 
                           layer = "SignificantTornadoes") |>
   dplyr::arrange(date, time) |>
   dplyr::select(-county) |>
@@ -1273,34 +1266,272 @@ OldTorn.sf <- sf::st_read(dsn = "SignificantTornadoes",
 table(OldTorn.sf$mag)
 range(OldTorn.sf$Year)
 
-df <- OldTorn.sf |>
+Old.df <- OldTorn.sf |>
   sf::st_drop_geometry() |>
   dplyr::group_by(Year) |>
-  dplyr::summarize(nT = dplyr::n(),
-                   nF2 = sum(mag == "F2"),
-                   nF3p = sum(mag == "F3" | mag == "F4" | mag == "F5"),
-                   ratio = nF3p / nF2)
+  dplyr::summarize(nT = dplyr::n()) |>
+  tsibble::as_tsibble(index = Year)
 
-  ggplot(data = df,
-         mapping = aes(x = Year, y = nT)) +
-  geom_line()
+ggplot(data = Old.df,
+       mapping = aes(x = Year, y = nT)) +
+  geom_line() +
+  geom_smooth()
 ```
 
-
-
-Get the modern tornado data
+FFT on annual tornado counts using the historical data
 ```{r}
-Torn.sf <- st_read(dsn = "1950-2019-torn-aspath", 
-                   layer = "1950-2019-torn-aspath") |>
-  filter(yr > 1950) |>
-  filter(mag >= 2 | fat > 0) |>
-  mutate(mag = paste0("F", mag)) |>
-  select(om, st, date, time, fat, inj, wid, len, mag, 
-         Year = yr, Month = mo, Day = dy,
-         slon, slat, elon, elat)
+Old.df$residuals <- residuals(loess(nT ~ Year, data = Old.df))
 
-table(Torn.sf$mag)
+fft <- torch::torch_fft_fft(as.numeric(scale(Old.df$residuals)))
+
+num_samples <- nrow(Old.df)
+nyquist_cutoff <- ceiling(num_samples / 2) # highest discernible frequency
+bins_below_nyquist <- 0:nyquist_cutoff
+
+sampling_rate <- 1 # per year
+frequencies_per_bin <- sampling_rate / num_samples
+frequencies <- frequencies_per_bin * bins_below_nyquist
+
+data.frame(f = frequencies, y = as.numeric(fft[1:(nyquist_cutoff + 1)]$abs())) |>
+ggplot(mapping = aes(f, y)) +
+  geom_line() +
+  xlab("frequency (per year)") + ylab("magnitude") +
+  ggtitle("Spectrum of annual tornado counts")
+
+( strongest <- torch::torch_topk(fft[1:(nyquist_cutoff/2)]$abs(), 6) )
+( important_freqs <- frequencies[as.numeric(strongest[[2]])] )
+( num_observations_in_season <- 1/important_freqs  )
 ```
+
+FFT on annual tornado counts using the modern data
+```{r}
+#download.file(url = "http://www.spc.noaa.gov/wcm/data/1950-2021_actual_tornadoes.csv",
+#              destfile = here::here("data", "Tornadoes.csv"))
+Torn.df <- readr::read_csv(file = here::here("data", "Tornadoes.csv")) |>
+  dplyr::filter(mag >= 2 | fat > 0) |>
+  dplyr::mutate(Year = yr) |>
+  dplyr::group_by(Year) |>
+  dplyr::summarize(nT = dplyr::n()) |>
+  tsibble::as_tsibble(index = Year)
+
+ggplot(data = Torn.df,
+       mapping = aes(x = Year, y = nT)) +
+  geom_line() +
+  geom_smooth()
+
+Torn.df$residuals <- residuals(loess(nT ~ Year, data = Torn.df))
+
+fft <- torch::torch_fft_fft(as.numeric(scale(Torn.df$residuals)))
+
+num_samples <- nrow(Torn.df)
+nyquist_cutoff <- ceiling(num_samples / 2) # highest discernible frequency
+bins_below_nyquist <- 0:nyquist_cutoff
+
+sampling_rate <- 1 # per year
+frequencies_per_bin <- sampling_rate / num_samples
+frequencies <- frequencies_per_bin * bins_below_nyquist
+
+data.frame(f = frequencies, y = as.numeric(fft[1:(nyquist_cutoff + 1)]$abs())) |>
+ggplot(mapping = aes(f, y)) +
+  geom_line() +
+  xlab("frequency (per year)") + ylab("magnitude") +
+  ggtitle("Spectrum of modern tornado data")
+
+( strongest <- torch::torch_topk(fft[1:(nyquist_cutoff/2)]$abs(), 6) )
+( important_freqs <- frequencies[as.numeric(strongest[[2]])] )
+( num_observations_in_season <- 1/important_freqs  )
+```
+
+FFT on the combined data
+```{r}
+AllTorn.df <- Old.df[Old.df$Year < 1950, ] |>
+  dplyr::bind_rows(Torn.df)
+
+ggplot(data = AllTorn.df,
+       mapping = aes(x = Year, y = nT)) +
+  geom_line() +
+  geom_smooth()
+
+AllTorn.df$residuals <- residuals(loess(nT ~ Year, data = AllTorn.df))
+
+ggplot(data = AllTorn.df,
+       mapping = aes(x = Year, y = residuals)) +
+  geom_line()
+
+fft <- torch::torch_fft_fft(as.numeric(scale(AllTorn.df$nT)))
+
+num_samples <- nrow(AllTorn.df)
+nyquist_cutoff <- ceiling(num_samples / 2) # highest discernible frequency
+bins_below_nyquist <- 0:nyquist_cutoff
+
+sampling_rate <- 1 # per year
+frequencies_per_bin <- sampling_rate / num_samples
+frequencies <- frequencies_per_bin * bins_below_nyquist
+
+data.frame(f = frequencies, y = as.numeric(fft[1:(nyquist_cutoff + 1)]$abs())) |>
+ggplot(mapping = aes(f, y)) +
+  geom_line() +
+  xlab("frequency (per year)") + ylab("magnitude") +
+  ggtitle("Spectrum of all tornado data")
+
+( strongest <- torch::torch_topk(fft[1:(nyquist_cutoff/2)]$abs(), 4) )
+( important_freqs <- frequencies[as.numeric(strongest[[2]])] )
+( num_observations_in_season <- 1/important_freqs  )
+```
+
+
+We now pass these to `feasts::STL()`, to obtain a decomposition into trend, components, and remainder
+```{r}
+library(feasts)
+
+AllTorn.df |>
+  model(STL(nT ~ season(period = 142) + season(period = 47) +
+                 season(period = 9))) |>
+  components() |>
+  autoplot()
+```
+
+Wavelets
+
+Example
+```{r}
+library(WaveletComp)
+
+x <- periodic.series(start.period = 50, length = 1000)
+x <- x + .2*rnorm(1000) # add some noise
+
+df <- data.frame(x = x)
+w <- analyze.wavelet(df, 
+                      "x", 
+                       loess.span = 0,
+                       dt = 1, 
+                       dj = 1/250,
+                       lowerPeriod = 16,
+                       upperPeriod = 128,
+                       make.pval = TRUE, 
+                       n.sim = 10)
+
+wt.image(w, 
+         color.key = "quantile",
+         n.levels = 250,
+         legend.params = list(lab = "wavelet power levels", mar = 4.7))
+
+```
+
+Tornado data
+```{r}
+w <- analyze.wavelet(Old.df, 
+                     my.series = "nT", 
+                     loess.span = 0,
+                     dt = 1, 
+                     dj = 1/250,
+                     lowerPeriod = 2,
+                     upperPeriod = 64,
+                     make.pval = TRUE, 
+                     n.sim = 10)
+
+wt.image(w, 
+         color.key = "quantile",
+         n.levels = 250,
+         legend.params = list(lab = "wavelet power levels", mar = 4.7))
+
+```
+
+No consistent oscillation across the period of record
+
+Prediction (not working)
+```{r}
+library(fable)
+
+fit <- AllTorn.df |>
+  model(
+    ets = ETS(nT),
+    arima = ARIMA(nT)
+  )
+
+fit |> 
+  coef()
+```
+
+
+
+Example of using time series data frame (`tsibble`). Get ENSO data
+https://blogs.rstudio.com/ai/posts/2023-01-19-torchwavelets/
+```{r}
+download.file("https://bmcnoldy.rsmas.miami.edu/tropics/oni/ONI_NINO34_1854-2022.txt",
+              destfile = here::here("data", "ONI_NINO34_1854-2022.txt"))
+
+enso <- readr::read_table(here::here("data", "ONI_NINO34_1854-2022.txt"), 
+                                     skip = 9) |> # skip first 9 rows
+  dplyr::mutate(t = tsibble::yearmonth(as.Date(paste0(YEAR, "-", `MON/MMM`, "-01")))) |>
+  dplyr::select(t, enso = NINO34_MEAN) |>
+  dplyr::filter(t >= tsibble::yearmonth("1950-01"), t <= tsibble::yearmonth("2022-09")) |>
+  tsibble::as_tsibble(index = t)
+
+enso
+
+fft <- torch::torch_fft_fft(as.numeric(scale(enso$enso)))
+
+num_samples <- nrow(enso)
+nyquist_cutoff <- ceiling(num_samples / 2) # highest discernible frequency
+bins_below_nyquist <- 0:nyquist_cutoff
+
+sampling_rate <- 12 # per year
+frequencies_per_bin <- sampling_rate / num_samples
+frequencies <- frequencies_per_bin * bins_below_nyquist
+
+df <- data.frame(f = frequencies, y = as.numeric(fft[1:(nyquist_cutoff + 1)]$abs()))
+
+df |>
+ggplot(mapping = aes(f, y)) +
+  geom_line() +
+  xlab("frequency (per year)") + ylab("magnitude") +
+  ggtitle("Spectrum of Niño 3.4 data")
+```
+
+Repeat using the historical significant tornado data by month
+
+```{r}
+Old.df <- OldTorn.sf |>
+  sf::st_drop_geometry() |> 
+  dplyr::group_by(Year, Month) |>
+  dplyr::summarize(nT = dplyr::n()) |>
+  dplyr::mutate(t = tsibble::make_yearmonth(year = Year, month = Month)) |>
+  tsibble::as_tsibble(index = t)
+
+fft <- torch::torch_fft_fft(as.numeric(scale(Old.df$nT)))
+
+num_samples <- nrow(Old.df)
+nyquist_cutoff <- ceiling(num_samples / 2) # highest discernible frequency
+bins_below_nyquist <- 0:nyquist_cutoff
+
+sampling_rate <- 12 # per year
+frequencies_per_bin <- sampling_rate / num_samples
+frequencies <- frequencies_per_bin * bins_below_nyquist
+
+data.frame(f = frequencies, y = as.numeric(fft[1:(nyquist_cutoff + 1)]$abs())) |>
+ggplot(mapping = aes(f, y)) +
+  geom_line() +
+  xlab("frequency (per year)") + ylab("magnitude") +
+  ggtitle("Spectrum of historical tornado data")
+```
+
+Strongest components
+```{r}
+( strongest <- torch::torch_topk(fft[1:(nyquist_cutoff/2)]$abs(), 3) )
+```
+
+What we have here are the magnitudes of the dominant components, as well as their respective bins in the spectrum. Let’s see which actual frequencies these correspond to
+```{r}
+( important_freqs <- frequencies[as.numeric(strongest[[2]])] )
+```
+
+Expressed the periodicity in months
+```{r}
+( num_observations_in_season <- 12/important_freqs  )
+```
+
+
 
 Combine the old and new tornado databases.
 ```{r}
